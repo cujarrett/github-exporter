@@ -41,12 +41,29 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 Runs on the homelab cluster via the `Api` Crossplane composition. Image: `ghcr.io/cujarrett/github-exporter`. ARM64.
 
-Config comes from a hand-created ConfigMap and the token from its own Secret, both in the `github-exporter` namespace. Create them before the first sync:
+Config comes from the `github-exporter-config` ConfigMap in `homelab-workspaces`, applied by ArgoCD. The token is a hand-created Secret, since no secret value reaches git:
 
 ```bash
-kubectl create configmap github-exporter-config -n github-exporter \
-  --from-literal=GITHUB_ORG=cujarrett
-
 kubectl create secret generic github-exporter-token -n github-exporter \
   --from-literal=GITHUB_TOKEN=<token>
 ```
+
+### Rotating `github-exporter-read`
+
+A fine-grained PAT on `cujarrett`, read-only across all repositories, with `Metadata: read` and `Pull requests: read`. All repositories rather than a list, because the exporter discovers them.
+
+```bash
+print -n "Paste new token: "
+read -rs NEW_TOKEN
+echo
+kubectl patch secret github-exporter-token -n github-exporter \
+  --type='json' \
+  -p='[{"op":"replace","path":"/data/GITHUB_TOKEN","value":"'"$(echo -n "$NEW_TOKEN" | base64)"'"}]'
+unset NEW_TOKEN
+```
+
+No restart. The binary reads the file on each GitHub call and kubelet refreshes the mount within about a minute.
+
+### Rotating `HOMELAB_PAT`
+
+Separate from the token above, and easy to confuse. `github-exporter-read` is a Kubernetes Secret the running binary reads to query GitHub. `HOMELAB_PAT` is a GitHub Actions secret only CI uses to bump this image's tag in `homelab-workspaces`, shared across every repo that deploys there and rotated centrally - see [GitHub Tokens](https://github.com/cujarrett/homelab/blob/main/docs/github-tokens.md) in the homelab repo. Rotating one leaves the other alone.
