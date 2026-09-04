@@ -29,8 +29,9 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GITHUB_TOKEN` | yes | | Token with read access to the tracked repos |
-| `REPOS` | yes | | Comma-separated repo names to poll, e.g. `homelab,my-vinyl,launchpad` |
+| `GITHUB_TOKEN` | in local dev | | Token with read access to the tracked repos. In the cluster it arrives as a mounted file instead |
+| `GITHUB_TOKEN_FILE` | no | `/secrets/github-exporter-token/GITHUB_TOKEN` | Path to the mounted token |
+| `REPOS` | no | | Comma-separated repo names. Omit to poll every active repo the account owns, rediscovered on each poll |
 | `GITHUB_ORG` | no | `cujarrett` | GitHub org/user the repos belong to |
 | `POLL_INTERVAL_SECONDS` | no | `300` | How often to query the GitHub search API |
 | `LOOKBACK_DAYS` | no | `30` | How far back each poll counts merged PRs |
@@ -40,10 +41,12 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 Runs on the homelab cluster via the `Api` Crossplane composition. Image: `ghcr.io/cujarrett/github-exporter`. ARM64.
 
-Reads its env vars from a hand-created Secret named `github-exporter-config` in the `github-exporter` namespace (see the `secretsFrom` field on the XR in `homelab-workspaces/github-exporter/github-exporter.yaml`) - create it before the first sync:
+Config comes from a hand-created ConfigMap and the token from its own Secret, both in the `github-exporter` namespace. Create them before the first sync:
 
 ```bash
-kubectl create secret generic github-exporter-config -n github-exporter \
-  --from-literal=GITHUB_TOKEN=<token> \
-  --from-literal=REPOS=<comma-separated-repo-list>
+kubectl create configmap github-exporter-config -n github-exporter \
+  --from-literal=GITHUB_ORG=cujarrett
+
+kubectl create secret generic github-exporter-token -n github-exporter \
+  --from-literal=GITHUB_TOKEN=<token>
 ```
