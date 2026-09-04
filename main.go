@@ -16,6 +16,16 @@ import (
 
 var version = "dev"
 
+// The platform mounts secretsFrom Secrets as files. The env var stays as the
+// fallback, which is how the token is set locally.
+func readSecret(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -24,7 +34,10 @@ func main() {
 		port = "8080"
 	}
 
-	token := os.Getenv("GITHUB_TOKEN")
+	token := readSecret("/secrets/github-exporter-token/GITHUB_TOKEN")
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
+	}
 	if token == "" {
 		logger.Error("GITHUB_TOKEN is required")
 		os.Exit(1)
@@ -45,6 +58,16 @@ func main() {
 		repos[i] = strings.TrimSpace(repos[i])
 	}
 
+	lookback := 30 * 24 * time.Hour
+	if v := os.Getenv("LOOKBACK_DAYS"); v != "" {
+		days, err := strconv.Atoi(v)
+		if err != nil {
+			logger.Error("invalid LOOKBACK_DAYS", "err", err)
+			os.Exit(1)
+		}
+		lookback = time.Duration(days) * 24 * time.Hour
+	}
+
 	pollInterval := 5 * time.Minute
 	if v := os.Getenv("POLL_INTERVAL_SECONDS"); v != "" {
 		secs, err := strconv.Atoi(v)
@@ -56,7 +79,7 @@ func main() {
 	}
 
 	client := &githubClient{token: token, org: org, httpClient: &http.Client{Timeout: 30 * time.Second}}
-	poller := newPoller(client, repos, logger)
+	poller := newPoller(client, repos, lookback, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)

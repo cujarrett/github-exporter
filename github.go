@@ -8,6 +8,10 @@ import (
 	"time"
 )
 
+// GitHub's search API caps a page at 100 and the poller does not paginate,
+// so this doubles as the point where counts start silently truncating.
+const searchPageSize = 100
+
 type githubClient struct {
 	token      string
 	org        string
@@ -33,7 +37,8 @@ type prItem struct {
 // guaranteed by the API - callers must sort if order matters.
 func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, error) {
 	q := fmt.Sprintf("repo:%s/%s is:pr is:merged merged:>%s", c.org, repo, cutoff.UTC().Format(time.RFC3339))
-	endpoint := "https://api.github.com/search/issues?q=" + url.QueryEscape(q) + "&sort=created&order=asc&per_page=100"
+	endpoint := fmt.Sprintf("https://api.github.com/search/issues?q=%s&sort=created&order=asc&per_page=%d",
+		url.QueryEscape(q), searchPageSize)
 
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {

@@ -9,16 +9,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var prMergedTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "github_exporter_pr_merged_total",
-		Help: "Merged pull requests, by repo and merge category.",
+// Every category is written on every poll, so a category that drops to zero
+// reports zero instead of leaving a stale series behind.
+var categories = []string{"human", "dependabot-auto", "dependabot-manual"}
+
+var prMerged = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_pr_merged",
+		Help: "Pull requests merged within the lookback window, by repo and merge category.",
 	},
 	[]string{"repo", "category"},
 )
 
-// A failed poll and a quiet week both leave prMergedTotal flat, so an expired
-// token is invisible without this.
+// A failed poll and a quiet week both leave prMerged flat, so an expired token
+// is invisible without this.
 var pollErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "github_exporter_poll_errors_total",
@@ -28,7 +32,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMergedTotal, pollErrorsTotal)
+	prometheus.MustRegister(prMerged, pollErrorsTotal)
 }
 
 // category classifies a merged PR from title and author alone - the search
@@ -47,21 +51,14 @@ func category(item prItem) string {
 }
 
 type poller struct {
-	client  *githubClient
-	repos   []string
-	logger  *slog.Logger
-	cursors map[string]time.Time
+	client   *githubClient
+	repos    []string
+	lookback time.Duration
+	logger   *slog.Logger
 }
 
-func newPoller(client *githubClient, repos []string, logger *slog.Logger) *poller {
-	cursors := make(map[string]time.Time, len(repos))
-	// Counting from process start rather than backfilling - a restart would
-	// otherwise re-increment every PR inside the backfill window.
-	start := time.Now()
-	for _, r := range repos {
-		cursors[r] = start
-	}
-	return &poller{client: client, repos: repos, logger: logger, cursors: cursors}
+func newPoller(client *githubClient, repos []string, lookback time.Duration, logger *slog.Logger) *poller {
+	return &poller{client: client, repos: repos, lookback: lookback, logger: logger}
 }
 
 func (p *poller) run(ctx context.Context, interval time.Duration) {
@@ -84,28 +81,29 @@ func (p *poller) pollAll() {
 	}
 }
 
+// pollRepo recounts the whole window rather than tracking a cursor, so a
+// restart reports the same numbers the previous process did.
 func (p *poller) pollRepo(repo string) {
-	cutoff := p.cursors[repo]
-	items, err := p.client.mergedSince(repo, cutoff)
+	items, err := p.client.mergedSince(repo, time.Now().Add(-p.lookback))
 	if err != nil {
 		pollErrorsTotal.WithLabelValues(repo).Inc()
 		p.logger.Error("poll failed", "repo", repo, "err", err)
 		return
 	}
 
-	latest := cutoff
+	if len(items) == searchPageSize {
+		p.logger.Warn("hit search page limit, counts may be low", "repo", repo, "limit", searchPageSize)
+	}
+
+	counts := make(map[string]float64, len(categories))
 	for _, item := range items {
 		if item.PullRequest.MergedAt == nil {
 			continue
 		}
-		mergedAt := *item.PullRequest.MergedAt
-		if !mergedAt.After(cutoff) {
-			continue
-		}
-		prMergedTotal.WithLabelValues(repo, category(item)).Inc()
-		if mergedAt.After(latest) {
-			latest = mergedAt
-		}
+		counts[category(item)]++
 	}
-	p.cursors[repo] = latest
+
+	for _, c := range categories {
+		prMerged.WithLabelValues(repo, c).Set(counts[c])
+	}
 }

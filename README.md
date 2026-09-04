@@ -1,6 +1,6 @@
 # github-exporter
 
-Polls the GitHub API for merged pull requests across a fixed list of repos and exposes Prometheus counters split by repo and merge category (`human`, `dependabot-auto`, `dependabot-manual`), so Grafana can compare auto-merged Dependabot volume against everything a person still has to review.
+Polls the GitHub API for merged pull requests across a fixed list of repos and exposes Prometheus gauges split by repo and merge category (`human`, `dependabot-auto`, `dependabot-manual`), so Grafana can compare auto-merged Dependabot volume against everything a person still has to review.
 
 ## Commands
 
@@ -22,7 +22,8 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `github_exporter_pr_merged_total` | counter | `repo`, `category` | Merged PRs since the exporter started. `category` is `human`, `dependabot-auto` (grouped minor/patch, eligible for auto-merge), or `dependabot-manual` (majors, always reviewed by hand) |
+| `github_exporter_pr_merged` | gauge | `repo`, `category` | Merged PRs inside the lookback window, recounted every poll. `category` is `human`, `dependabot-auto` (grouped minor/patch, eligible for auto-merge), or `dependabot-manual` (majors, always reviewed by hand) |
+| `github_exporter_poll_errors_total` | counter | `repo` | Failed GitHub polls. Alert on this - a dead token otherwise looks like a quiet week |
 
 ## Environment variables
 
@@ -32,6 +33,7 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 | `REPOS` | yes | | Comma-separated repo names to poll, e.g. `homelab,my-vinyl,launchpad` |
 | `GITHUB_ORG` | no | `cujarrett` | GitHub org/user the repos belong to |
 | `POLL_INTERVAL_SECONDS` | no | `300` | How often to query the GitHub search API |
+| `LOOKBACK_DAYS` | no | `30` | How far back each poll counts merged PRs |
 | `PORT` | no | `8080` | HTTP listen port |
 
 ## Deployment
