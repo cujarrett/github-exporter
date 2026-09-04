@@ -77,6 +77,53 @@ func (c *githubClient) listRepos() ([]string, error) {
 	}
 }
 
+type workflowRun struct {
+	Conclusion string `json:"conclusion"`
+}
+
+type workflowRunsResult struct {
+	Runs []workflowRun `json:"workflow_runs"`
+}
+
+// workflowRunsSince returns default-branch workflow runs created after cutoff.
+// Runs still in flight carry an empty conclusion and are dropped, so a poll
+// mid-build does not report a phantom outcome.
+func (c *githubClient) workflowRunsSince(repo string, cutoff time.Time) ([]workflowRun, error) {
+	endpoint := fmt.Sprintf(
+		"https://api.github.com/repos/%s/%s/actions/runs?branch=main&created=%s&per_page=%d",
+		c.org, repo, url.QueryEscape(">"+cutoff.UTC().Format("2006-01-02")), searchPageSize)
+
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github workflow runs returned %d for repo %s", resp.StatusCode, repo)
+	}
+
+	var result workflowRunsResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	out := make([]workflowRun, 0, len(result.Runs))
+	for _, r := range result.Runs {
+		if r.Conclusion != "" {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
 // mergedSince returns PRs merged in repo after cutoff, oldest first is not
 // guaranteed by the API - callers must sort if order matters.
 func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, error) {

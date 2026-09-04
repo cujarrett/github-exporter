@@ -22,7 +22,8 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `github_exporter_pr_merged` | gauge | `repo`, `category` | Merged PRs inside the lookback window, recounted every poll. `category` is `human`, `dependabot-auto` (grouped minor/patch, eligible for auto-merge), or `dependabot-manual` (majors, always reviewed by hand) |
+| `github_exporter_pr_merged` | gauge | `repo`, `category`, `window` | Merged PRs inside a window, recounted every poll. `category` is `human`, `dependabot-auto` (grouped minor/patch, eligible for auto-merge), or `dependabot-manual` (majors, always reviewed by hand). `window` is `1d` for a trend line and the configured lookback (`30d` by default) for the headline count |
+| `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch inside the lookback window. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |
 | `github_exporter_poll_errors_total` | counter | `repo` | Failed GitHub polls. Alert on this - a dead token otherwise looks like a quiet week |
 
 ## Environment variables
@@ -50,7 +51,7 @@ kubectl create secret generic github-exporter-token -n github-exporter \
 
 ### Rotating `github-exporter-read`
 
-A fine-grained PAT on `cujarrett`, read-only across all repositories, with `Metadata: read` and `Pull requests: read`. All repositories rather than a list, because the exporter discovers them.
+A fine-grained PAT on `cujarrett`, read-only across all repositories, with `Metadata: read`, `Pull requests: read` and `Actions: read`. All repositories rather than a list, because the exporter discovers them.
 
 ```bash
 print -n "Paste new token: "
