@@ -78,7 +78,7 @@ func main() {
 		pollInterval = time.Duration(secs) * time.Second
 	}
 
-	client := &githubClient{token: token, org: org, httpClient: &http.Client{Timeout: 30 * time.Second}}
+	client := &githubClient{token: token, org: org, httpClient: &http.Client{Timeout: 30 * time.Second}, facts: map[string]mergeFacts{}}
 	poller := newPoller(client, repos, lookback, logger)
 
 	mux := http.NewServeMux()

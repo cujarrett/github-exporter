@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +18,9 @@ type githubClient struct {
 	token      string
 	org        string
 	httpClient *http.Client
+
+	factsMu sync.RWMutex
+	facts   map[string]mergeFacts
 }
 
 type searchResult struct {
@@ -75,6 +80,79 @@ func (c *githubClient) listRepos() ([]string, error) {
 			return names, nil
 		}
 	}
+}
+
+// mergeFacts is how a merged PR actually reached main. Cached forever by repo and
+// number, because none of it can change once the PR is merged - without the cache
+// this would be two API calls per PR on every poll.
+type mergeFacts struct {
+	mergedBy  string
+	autoMerge bool
+}
+
+func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error) {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	c.factsMu.RLock()
+	f, ok := c.facts[key]
+	c.factsMu.RUnlock()
+	if ok {
+		return f, nil
+	}
+
+	var pr struct {
+		MergedBy struct {
+			Login string `json:"login"`
+		} `json:"merged_by"`
+	}
+	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
+		return mergeFacts{}, err
+	}
+	f = mergeFacts{mergedBy: pr.MergedBy.Login}
+
+	// GitHub records the person who armed auto-merge as the merger, so merged_by
+	// alone cannot tell an armed merge from a clicked one. Only the timeline can.
+	if f.mergedBy != "" && !strings.HasSuffix(f.mergedBy, "[bot]") {
+		var events []struct {
+			Event string `json:"event"`
+		}
+		// One page is enough: auto_merge_enabled lands early, and a PR with more
+		// than 100 timeline events is not the common case worth paginating for.
+		if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/timeline?per_page=100", c.org, repo, number), &events); err != nil {
+			return mergeFacts{}, err
+		}
+		for _, e := range events {
+			if e.Event == "auto_merge_enabled" {
+				f.autoMerge = true
+				break
+			}
+		}
+	}
+
+	c.factsMu.Lock()
+	c.facts[key] = f
+	c.factsMu.Unlock()
+	return f, nil
+}
+
+// getJSON issues an authenticated GET and decodes the body.
+func (c *githubClient) getJSON(endpoint string, out any) error {
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("github returned %d for %s", resp.StatusCode, endpoint)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }
 
 type workflowRun struct {

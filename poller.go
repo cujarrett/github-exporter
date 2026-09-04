@@ -10,9 +10,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Every category is written on every poll, so a category that drops to zero
-// reports zero instead of leaving a stale series behind.
-var categories = []string{"human", "dependabot-auto", "dependabot-manual"}
+// Every combination is written on every poll, so one that drops to zero reports
+// zero instead of leaving a stale series behind.
+var authors = []string{"human", "dependabot"}
+var merges = []string{"clicked", "auto", "bot"}
 
 // Written on every poll for the same reason as categories - a conclusion that
 // stops happening reports zero instead of holding its last value forever.
@@ -25,9 +26,9 @@ const shortWindow = 24 * time.Hour
 var prMerged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "github_exporter_pr_merged",
-		Help: "Pull requests merged within the lookback window, by repo and merge category.",
+		Help: "Pull requests merged within the lookback window, by who opened it and how it reached main.",
 	},
-	[]string{"repo", "category", "window"},
+	[]string{"repo", "author", "merge", "window"},
 )
 
 // Workflow runs on the default branch, so a pass rate reads as "did main stay
@@ -54,19 +55,27 @@ func init() {
 	prometheus.MustRegister(prMerged, pollErrorsTotal, workflowRuns)
 }
 
-// category classifies a merged PR from title and author alone - the search
-// API doesn't return the head branch, and dependabot's grouped-update titles
-// ("bump the non-breaking group", "bump the actions group") are the only
-// other signal that a PR was eligible for our auto-merge workflow.
-func category(item prItem) string {
-	if item.User.Login != "dependabot[bot]" {
-		return "human"
+// author says who opened the PR. Everything about how it merged comes from
+// mergeFacts instead, because a title cannot tell you that.
+func author(item prItem) string {
+	if item.User.Login == "dependabot[bot]" {
+		return "dependabot"
 	}
-	title := strings.ToLower(item.Title)
-	if strings.Contains(title, "bump the non-breaking group") || strings.Contains(title, "bump the actions group") {
-		return "dependabot-auto"
+	return "human"
+}
+
+// mergeKind reads GitHub's own record rather than inferring from a title.
+// "auto" is a merge GitHub performed once checks passed, "clicked" is a person
+// pressing the button, "bot" is a workflow or app merging with its own token.
+func mergeKind(f mergeFacts) string {
+	switch {
+	case f.autoMerge:
+		return "auto"
+	case strings.HasSuffix(f.mergedBy, "[bot]"):
+		return "bot"
+	default:
+		return "clicked"
 	}
-	return "dependabot-manual"
 }
 
 type poller struct {
@@ -125,24 +134,35 @@ func (p *poller) pollRepo(repo string) {
 	}
 
 	// The short window is a subset of the long one, so one search feeds both.
-	long := make(map[string]float64, len(categories))
-	short := make(map[string]float64, len(categories))
+	type key struct{ author, merge string }
+	long := map[key]float64{}
+	short := map[key]float64{}
 	shortCutoff := now.Add(-shortWindow)
 	for _, item := range items {
 		if item.PullRequest.MergedAt == nil {
 			continue
 		}
-		c := category(item)
-		long[c]++
+		facts, err := p.client.mergeFactsFor(repo, item.Number)
+		if err != nil {
+			pollErrorsTotal.WithLabelValues(repo).Inc()
+			p.logger.Error("merge facts failed", "repo", repo, "pr", item.Number, "err", err)
+			return
+		}
+		k := key{author(item), mergeKind(facts)}
+		long[k]++
 		if item.PullRequest.MergedAt.After(shortCutoff) {
-			short[c]++
+			short[k]++
 		}
 	}
 
 	longLabel := windowLabel(p.lookback)
-	for _, c := range categories {
-		prMerged.WithLabelValues(repo, c, longLabel).Set(long[c])
-		prMerged.WithLabelValues(repo, c, windowLabel(shortWindow)).Set(short[c])
+	shortLabel := windowLabel(shortWindow)
+	for _, a := range authors {
+		for _, m := range merges {
+			k := key{a, m}
+			prMerged.WithLabelValues(repo, a, m, longLabel).Set(long[k])
+			prMerged.WithLabelValues(repo, a, m, shortLabel).Set(short[k])
+		}
 	}
 
 	p.pollWorkflows(repo, now.Add(-p.lookback))

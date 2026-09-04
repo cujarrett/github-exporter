@@ -22,7 +22,7 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `github_exporter_pr_merged` | gauge | `repo`, `category`, `window` | Merged PRs inside a window, recounted every poll. `category` is `human`, `dependabot-auto` (grouped minor/patch, eligible for auto-merge), or `dependabot-manual` (majors, always reviewed by hand). `window` is `1d` for a trend line and the configured lookback (`30d` by default) for the headline count |
+| `github_exporter_pr_merged` | gauge | `repo`, `author`, `merge`, `window` | Merged PRs inside a window, recounted every poll. `author` is `human` or `dependabot`. `merge` is how it reached main, read from GitHub's own record rather than the title: `auto` (GitHub merged it once checks passed), `clicked` (a person pressed the button), `bot` (a workflow merged with its own token). `window` is `1d` for a trend line and the configured lookback (`30d` by default) for the headline count |
 | `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch inside the lookback window. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |
 | `github_exporter_poll_errors_total` | counter | `repo` | Failed GitHub polls. Alert on this - a dead token otherwise looks like a quiet week |
 
