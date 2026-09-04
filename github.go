@@ -33,6 +33,50 @@ type prItem struct {
 	} `json:"pull_request"`
 }
 
+type repoItem struct {
+	Name     string `json:"name"`
+	Archived bool   `json:"archived"`
+	Fork     bool   `json:"fork"`
+}
+
+// listRepos returns the account's own active repo names. Called on every poll, so
+// a new repo starts reporting without anyone editing config.
+func (c *githubClient) listRepos() ([]string, error) {
+	var names []string
+	for page := 1; ; page++ {
+		endpoint := fmt.Sprintf("https://api.github.com/users/%s/repos?type=owner&per_page=100&page=%d", c.org, page)
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var batch []repoItem
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close() //nolint:errcheck
+			return nil, fmt.Errorf("github repo list returned %d for %s", resp.StatusCode, c.org)
+		}
+		err = json.NewDecoder(resp.Body).Decode(&batch)
+		resp.Body.Close() //nolint:errcheck
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range batch {
+			if !r.Archived && !r.Fork {
+				names = append(names, r.Name)
+			}
+		}
+		if len(batch) < 100 {
+			return names, nil
+		}
+	}
+}
+
 // mergedSince returns PRs merged in repo after cutoff, oldest first is not
 // guaranteed by the API - callers must sort if order matters.
 func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, error) {

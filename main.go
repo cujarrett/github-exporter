@@ -48,14 +48,14 @@ func main() {
 		org = "cujarrett"
 	}
 
-	reposEnv := os.Getenv("REPOS")
-	if reposEnv == "" {
-		logger.Error("REPOS is required (comma-separated repo names)")
-		os.Exit(1)
-	}
-	repos := strings.Split(reposEnv, ",")
-	for i := range repos {
-		repos[i] = strings.TrimSpace(repos[i])
+	// Empty means discover the account's own repos on every poll. Set REPOS only to
+	// watch a subset.
+	var repos []string
+	if v := os.Getenv("REPOS"); v != "" {
+		repos = strings.Split(v, ",")
+		for i := range repos {
+			repos[i] = strings.TrimSpace(repos[i])
+		}
 	}
 
 	lookback := 30 * 24 * time.Hour

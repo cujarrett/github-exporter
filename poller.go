@@ -76,7 +76,16 @@ func (p *poller) run(ctx context.Context, interval time.Duration) {
 }
 
 func (p *poller) pollAll() {
-	for _, repo := range p.repos {
+	repos := p.repos
+	if len(repos) == 0 {
+		discovered, err := p.client.listRepos()
+		if err != nil {
+			p.logger.Error("repo discovery failed, skipping this poll", "err", err)
+			return
+		}
+		repos = discovered
+	}
+	for _, repo := range repos {
 		p.pollRepo(repo)
 	}
 }
