@@ -22,8 +22,10 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `github_exporter_pr_merged` | gauge | `repo`, `author`, `merge`, `window` | Merged PRs inside a window, recounted every poll. `author` is `human` or `dependabot`. `merge` is how it reached main, read from GitHub's own record rather than the title: `auto` (GitHub merged it once checks passed), `clicked` (a person pressed the button), `bot` (a workflow merged with its own token). `window` is `1d` for a trend line and the configured lookback (`30d` by default) for the headline count |
-| `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch inside the lookback window. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |
+| `github_exporter_pr_merged` | gauge | `repo`, `author`, `merge`, `window` | Merged PRs inside a window, recounted every poll. `author` is `human` or `dependabot`. `merge` is how it reached main, read from GitHub's own record rather than the title: `auto` (GitHub merged it once checks passed), `clicked` (a person pressed the button), `bot` (a workflow merged with its own token). `window` is `1d`, `7d`, `30d` or `365d` |
+| `github_exporter_pr_opened` | gauge | `repo`, `author`, `window` | PRs opened inside a window, regardless of current state. Same `window` values as above |
+| `github_exporter_pr_open` | gauge | `repo`, `author` | PRs open right now - a snapshot, not a window |
+| `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch in the last 30 days. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |
 | `github_exporter_poll_errors_total` | counter | `repo` | Failed GitHub polls. Alert on this - a dead token otherwise looks like a quiet week |
 
 ## Environment variables
@@ -35,7 +37,6 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 | `REPOS` | no | | Comma-separated repo names. Omit to poll every active repo the account owns, rediscovered on each poll |
 | `GITHUB_ORG` | no | `cujarrett` | GitHub org/user the repos belong to |
 | `POLL_INTERVAL_SECONDS` | no | `300` | How often to query the GitHub search API |
-| `LOOKBACK_DAYS` | no | `30` | How far back each poll counts merged PRs |
 | `PORT` | no | `8080` | HTTP listen port |
 
 ## Deployment

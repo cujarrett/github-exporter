@@ -19,16 +19,33 @@ var merges = []string{"clicked", "auto", "bot"}
 // stops happening reports zero instead of holding its last value forever.
 var conclusions = []string{"success", "failure", "cancelled", "skipped"}
 
-// The short window is what a trend line reads from; the long one is the headline
-// count. Both are recounted each poll, so neither needs a cursor.
-const shortWindow = 24 * time.Hour
+// The windows the dashboard graphs. Each poll fetches once out to the widest
+// and buckets locally, so it's one search call per repo, not one per window.
+var windows = []time.Duration{24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour, 365 * 24 * time.Hour}
 
 var prMerged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "github_exporter_pr_merged",
-		Help: "Pull requests merged within the lookback window, by who opened it and how it reached main.",
+		Help: "Pull requests merged within a window, by who opened it and how it reached main.",
 	},
 	[]string{"repo", "author", "merge", "window"},
+)
+
+var prOpened = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_pr_opened",
+		Help: "Pull requests opened within a window, regardless of current state, by who opened it.",
+	},
+	[]string{"repo", "author", "window"},
+)
+
+// Point-in-time, not windowed - "how many PRs are open right now".
+var prOpen = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_pr_open",
+		Help: "Pull requests currently open, by who opened it.",
+	},
+	[]string{"repo", "author"},
 )
 
 // Workflow runs on the default branch, so a pass rate reads as "did main stay
@@ -52,7 +69,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMerged, pollErrorsTotal, workflowRuns)
+	prometheus.MustRegister(prMerged, prOpened, prOpen, pollErrorsTotal, workflowRuns)
 }
 
 // author says who opened the PR. Everything about how it merged comes from
@@ -79,14 +96,13 @@ func mergeKind(f mergeFacts) string {
 }
 
 type poller struct {
-	client   *githubClient
-	repos    []string
-	lookback time.Duration
-	logger   *slog.Logger
+	client *githubClient
+	repos  []string
+	logger *slog.Logger
 }
 
-func newPoller(client *githubClient, repos []string, lookback time.Duration, logger *slog.Logger) *poller {
-	return &poller{client: client, repos: repos, lookback: lookback, logger: logger}
+func newPoller(client *githubClient, repos []string, logger *slog.Logger) *poller {
+	return &poller{client: client, repos: repos, logger: logger}
 }
 
 func (p *poller) run(ctx context.Context, interval time.Duration) {
@@ -118,26 +134,36 @@ func (p *poller) pollAll() {
 	}
 }
 
-// pollRepo recounts the whole window rather than tracking a cursor, so a
-// restart reports the same numbers the previous process did.
+// pollRepo recounts every window from scratch rather than tracking a cursor, so
+// a restart reports the same numbers the previous process did.
 func (p *poller) pollRepo(repo string) {
 	now := time.Now()
-	items, err := p.client.mergedSince(repo, now.Add(-p.lookback))
+	widest := windows[len(windows)-1]
+
+	p.pollMerged(repo, now, widest)
+	p.pollOpened(repo, now, widest)
+	p.pollOpenNow(repo)
+	p.pollWorkflows(repo, now.Add(-windows[2])) // 30d, the one figure the CI panel headlines
+}
+
+type authorMergeKey struct{ author, merge string }
+
+func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
+	items, err := p.client.mergedSince(repo, now.Add(-widest))
 	if err != nil {
 		pollErrorsTotal.WithLabelValues(repo).Inc()
 		p.logger.Error("poll failed", "repo", repo, "err", err)
 		return
 	}
-
 	if len(items) == searchPageSize {
-		p.logger.Warn("hit search page limit, counts may be low", "repo", repo, "limit", searchPageSize)
+		p.logger.Warn("hit search page limit, merged counts may be low", "repo", repo, "limit", searchPageSize)
 	}
 
-	// The short window is a subset of the long one, so one search feeds both.
-	type key struct{ author, merge string }
-	long := map[key]float64{}
-	short := map[key]float64{}
-	shortCutoff := now.Add(-shortWindow)
+	// Every window is a subset of the widest one, so one search feeds all of them.
+	counts := make(map[time.Duration]map[authorMergeKey]float64, len(windows))
+	for _, w := range windows {
+		counts[w] = map[authorMergeKey]float64{}
+	}
 	for _, item := range items {
 		if item.PullRequest.MergedAt == nil {
 			continue
@@ -148,28 +174,78 @@ func (p *poller) pollRepo(repo string) {
 			p.logger.Error("merge facts failed", "repo", repo, "pr", item.Number, "err", err)
 			return
 		}
-		k := key{author(item), mergeKind(facts)}
-		long[k]++
-		if item.PullRequest.MergedAt.After(shortCutoff) {
-			short[k]++
+		k := authorMergeKey{author(item), mergeKind(facts)}
+		for _, w := range windows {
+			if item.PullRequest.MergedAt.After(now.Add(-w)) {
+				counts[w][k]++
+			}
 		}
 	}
 
-	longLabel := windowLabel(p.lookback)
-	shortLabel := windowLabel(shortWindow)
+	for _, w := range windows {
+		label := windowLabel(w)
+		for _, a := range authors {
+			for _, m := range merges {
+				prMerged.WithLabelValues(repo, a, m, label).Set(counts[w][authorMergeKey{a, m}])
+			}
+		}
+	}
+}
+
+func (p *poller) pollOpened(repo string, now time.Time, widest time.Duration) {
+	items, err := p.client.openedSince(repo, now.Add(-widest))
+	if err != nil {
+		pollErrorsTotal.WithLabelValues(repo).Inc()
+		p.logger.Error("opened poll failed", "repo", repo, "err", err)
+		return
+	}
+	if len(items) == searchPageSize {
+		p.logger.Warn("hit search page limit, opened counts may be low", "repo", repo, "limit", searchPageSize)
+	}
+
+	counts := make(map[time.Duration]map[string]float64, len(windows))
+	for _, w := range windows {
+		counts[w] = map[string]float64{}
+	}
+	for _, item := range items {
+		a := author(item)
+		for _, w := range windows {
+			if item.CreatedAt.After(now.Add(-w)) {
+				counts[w][a]++
+			}
+		}
+	}
+
+	for _, w := range windows {
+		label := windowLabel(w)
+		for _, a := range authors {
+			prOpened.WithLabelValues(repo, a, label).Set(counts[w][a])
+		}
+	}
+}
+
+func (p *poller) pollOpenNow(repo string) {
+	items, err := p.client.openNow(repo)
+	if err != nil {
+		pollErrorsTotal.WithLabelValues(repo).Inc()
+		p.logger.Error("open poll failed", "repo", repo, "err", err)
+		return
+	}
+	if len(items) == searchPageSize {
+		p.logger.Warn("hit search page limit, open count may be low", "repo", repo, "limit", searchPageSize)
+	}
+
+	counts := map[string]float64{}
+	for _, item := range items {
+		counts[author(item)]++
+	}
 	for _, a := range authors {
-		for _, m := range merges {
-			k := key{a, m}
-			prMerged.WithLabelValues(repo, a, m, longLabel).Set(long[k])
-			prMerged.WithLabelValues(repo, a, m, shortLabel).Set(short[k])
-		}
+		prOpen.WithLabelValues(repo, a).Set(counts[a])
 	}
-
-	p.pollWorkflows(repo, now.Add(-p.lookback))
 }
 
 // windowLabel renders a duration as whole days, which is the only granularity
-// either window is ever set to.
+// any window is ever set to.
 func windowLabel(d time.Duration) string {
 	return fmt.Sprintf("%dd", int(d.Hours()/24))
 }

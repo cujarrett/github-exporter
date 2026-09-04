@@ -28,9 +28,10 @@ type searchResult struct {
 }
 
 type prItem struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	User   struct {
+	Number    int       `json:"number"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"created_at"`
+	User      struct {
 		Login string `json:"login"`
 	} `json:"user"`
 	PullRequest struct {
@@ -202,10 +203,10 @@ func (c *githubClient) workflowRunsSince(repo string, cutoff time.Time) ([]workf
 	return out, nil
 }
 
-// mergedSince returns PRs merged in repo after cutoff, oldest first is not
-// guaranteed by the API - callers must sort if order matters.
-func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, error) {
-	q := fmt.Sprintf("repo:%s/%s is:pr is:merged merged:>%s", c.org, repo, cutoff.UTC().Format(time.RFC3339))
+// searchPRs runs a GitHub search/issues query and returns the matching items.
+// mergedSince, openedSince and openNow all share this - only the query string
+// differs between them.
+func (c *githubClient) searchPRs(q string) ([]prItem, error) {
 	endpoint := fmt.Sprintf("https://api.github.com/search/issues?q=%s&sort=created&order=asc&per_page=%d",
 		url.QueryEscape(q), searchPageSize)
 
@@ -223,7 +224,7 @@ func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, err
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github search returned %d for repo %s", resp.StatusCode, repo)
+		return nil, fmt.Errorf("github search returned %d for query %q", resp.StatusCode, q)
 	}
 
 	var result searchResult
@@ -231,4 +232,23 @@ func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, err
 		return nil, err
 	}
 	return result.Items, nil
+}
+
+// mergedSince returns PRs merged in repo after cutoff, oldest first is not
+// guaranteed by the API - callers must sort if order matters.
+func (c *githubClient) mergedSince(repo string, cutoff time.Time) ([]prItem, error) {
+	q := fmt.Sprintf("repo:%s/%s is:pr is:merged merged:>%s", c.org, repo, cutoff.UTC().Format(time.RFC3339))
+	return c.searchPRs(q)
+}
+
+// openedSince returns PRs opened in repo after cutoff, regardless of current state.
+func (c *githubClient) openedSince(repo string, cutoff time.Time) ([]prItem, error) {
+	q := fmt.Sprintf("repo:%s/%s is:pr created:>%s", c.org, repo, cutoff.UTC().Format(time.RFC3339))
+	return c.searchPRs(q)
+}
+
+// openNow returns PRs currently open in repo - a point-in-time snapshot, not a window.
+func (c *githubClient) openNow(repo string) ([]prItem, error) {
+	q := fmt.Sprintf("repo:%s/%s is:pr is:open", c.org, repo)
+	return c.searchPRs(q)
 }

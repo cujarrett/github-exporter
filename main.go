@@ -58,16 +58,6 @@ func main() {
 		}
 	}
 
-	lookback := 30 * 24 * time.Hour
-	if v := os.Getenv("LOOKBACK_DAYS"); v != "" {
-		days, err := strconv.Atoi(v)
-		if err != nil {
-			logger.Error("invalid LOOKBACK_DAYS", "err", err)
-			os.Exit(1)
-		}
-		lookback = time.Duration(days) * 24 * time.Hour
-	}
-
 	pollInterval := 5 * time.Minute
 	if v := os.Getenv("POLL_INTERVAL_SECONDS"); v != "" {
 		secs, err := strconv.Atoi(v)
@@ -79,7 +69,7 @@ func main() {
 	}
 
 	client := &githubClient{token: token, org: org, httpClient: &http.Client{Timeout: 30 * time.Second}, facts: map[string]mergeFacts{}}
-	poller := newPoller(client, repos, lookback, logger)
+	poller := newPoller(client, repos, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler)
