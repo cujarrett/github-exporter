@@ -14,6 +14,13 @@ import (
 // so this doubles as the point where counts start silently truncating.
 const searchPageSize = 100
 
+// GitHub's Search API has its own, much tighter limit than the core API - 30
+// requests/minute for an authenticated user, enforced separately from the
+// 5000/hour budget everything else here shares. Three searches per repo
+// (merged, opened, open) across ~20 repos blows through that in under 20
+// seconds without this, and every repo after that 403s for the rest of the poll.
+const minSearchInterval = 2200 * time.Millisecond
+
 type githubClient struct {
 	token      string
 	org        string
@@ -24,6 +31,9 @@ type githubClient struct {
 
 	branchMu sync.RWMutex
 	branches map[string]string
+
+	searchMu   sync.Mutex
+	lastSearch time.Time
 }
 
 type searchResult struct {
@@ -238,10 +248,24 @@ func (c *githubClient) workflowRunsSince(repo string, cutoff time.Time) ([]workf
 	return out, nil
 }
 
+// throttleSearch blocks until minSearchInterval has passed since the last
+// search call, serializing every caller so the whole poll - not just one
+// goroutine - stays under GitHub's per-minute Search API limit.
+func (c *githubClient) throttleSearch() {
+	c.searchMu.Lock()
+	defer c.searchMu.Unlock()
+	if wait := minSearchInterval - time.Since(c.lastSearch); wait > 0 {
+		time.Sleep(wait)
+	}
+	c.lastSearch = time.Now()
+}
+
 // searchPRs runs a GitHub search/issues query and returns the matching items.
 // mergedSince, openedSince and openNow all share this - only the query string
 // differs between them.
 func (c *githubClient) searchPRs(q string) ([]prItem, error) {
+	c.throttleSearch()
+
 	endpoint := fmt.Sprintf("https://api.github.com/search/issues?q=%s&sort=created&order=asc&per_page=%d",
 		url.QueryEscape(q), searchPageSize)
 
