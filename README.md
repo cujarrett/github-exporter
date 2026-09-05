@@ -1,6 +1,6 @@
 # github-exporter
 
-Polls the GitHub API for merged pull requests across a fixed list of repos and exposes Prometheus gauges split by repo and merge category (`human`, `dependabot-auto`, `dependabot-manual`), so Grafana can compare auto-merged Dependabot volume against everything a person still has to review.
+Polls the GitHub API for pull request activity across every repo the account owns and exposes Prometheus gauges split by repo, who opened the PR, how it merged, and whether it was ever eligible for an auto-merge workflow - so Grafana can compare auto-merged bot volume against everything a person still has to review.
 
 ## Commands
 
@@ -22,7 +22,7 @@ Polls the GitHub API for merged pull requests across a fixed list of repos and e
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `github_exporter_pr_merged` | gauge | `repo`, `author`, `merge`, `window` | Merged PRs inside a window, recounted every poll. `author` is `human` or `dependabot`. `merge` is how it reached main, read from GitHub's own record rather than the title: `auto` (GitHub merged it once checks passed), `clicked` (a person pressed the button), `bot` (a workflow merged with its own token). `window` is `1d`, `7d`, `30d` or `365d` |
+| `github_exporter_pr_merged` | gauge | `repo`, `author`, `merge`, `scope`, `window` | Merged PRs inside a window, recounted every poll. `author` is `human` or `bot` (any GitHub App account - Dependabot, Renovate, or otherwise). `merge` is how it reached main, read from GitHub's own record rather than the title: `auto` (GitHub merged it once checks passed), `clicked` (a person pressed the button), `bot` (a workflow merged with its own token). `scope` is whether the PR was ever eligible for an auto-merge workflow: `human` (a person's own PR, never in scope), `auto-candidate` (a grouped minor/patch or actions bump), `excluded` (an ungrouped major bump - correctly required a human). The eligibility check currently only understands Dependabot's grouping convention. `window` is `1d`, `7d`, `30d` or `365d` |
 | `github_exporter_pr_opened` | gauge | `repo`, `author`, `window` | PRs opened inside a window, regardless of current state. Same `window` values as above |
 | `github_exporter_pr_open` | gauge | `repo`, `author` | PRs open right now - a snapshot, not a window |
 | `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch in the last 30 days. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |

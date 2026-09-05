@@ -12,8 +12,14 @@ import (
 
 // Every combination is written on every poll, so one that drops to zero reports
 // zero instead of leaving a stale series behind.
-var authors = []string{"human", "dependabot"}
+var authors = []string{"human", "bot"}
 var merges = []string{"clicked", "auto", "bot"}
+
+// scope is what tells the auto-merge candidate pile apart from the pile that
+// never had a chance: a human PR is never in scope for any bot's auto-merge
+// workflow, and a bot PR outside the grouped branches (a major bump) isn't
+// either.
+var scopes = []string{"human", "auto-candidate", "excluded"}
 
 // Written on every poll for the same reason as categories - a conclusion that
 // stops happening reports zero instead of holding its last value forever.
@@ -26,9 +32,9 @@ var windows = []time.Duration{24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time
 var prMerged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "github_exporter_pr_merged",
-		Help: "Pull requests merged within a window, by who opened it and how it reached main.",
+		Help: "Pull requests merged within a window, by who opened it, how it reached main, and whether it was ever eligible for the auto-merge workflow.",
 	},
-	[]string{"repo", "author", "merge", "window"},
+	[]string{"repo", "author", "merge", "scope", "window"},
 )
 
 var prOpened = prometheus.NewGaugeVec(
@@ -72,11 +78,13 @@ func init() {
 	prometheus.MustRegister(prMerged, prOpened, prOpen, pollErrorsTotal, workflowRuns)
 }
 
-// author says who opened the PR. Everything about how it merged comes from
-// mergeFacts instead, because a title cannot tell you that.
+// author says who opened the PR. Any GitHub App account - Dependabot, Renovate,
+// or otherwise - uses the "[bot]" suffix, so this isn't tied to one tool's name.
+// Everything about how it merged comes from mergeFacts instead, because a
+// title cannot tell you that.
 func author(item prItem) string {
-	if item.User.Login == "dependabot[bot]" {
-		return "dependabot"
+	if strings.HasSuffix(item.User.Login, "[bot]") {
+		return "bot"
 	}
 	return "human"
 }
@@ -93,6 +101,20 @@ func mergeKind(f mergeFacts) string {
 	default:
 		return "clicked"
 	}
+}
+
+// scope classifies whether the PR could ever have been auto-merged. The branch
+// check is Dependabot's own grouping convention - non-breaking-/actions- for a
+// grouped minor/patch bump - and will need a second pattern once Renovate is
+// configured with its own auto-merge workflow.
+func scope(item prItem, f mergeFacts) string {
+	if author(item) != "bot" {
+		return "human"
+	}
+	if strings.Contains(f.branch, "/non-breaking-") || strings.Contains(f.branch, "/actions-") {
+		return "auto-candidate"
+	}
+	return "excluded"
 }
 
 type poller struct {
@@ -146,7 +168,7 @@ func (p *poller) pollRepo(repo string) {
 	p.pollWorkflows(repo, now.Add(-windows[2])) // 30d, the one figure the CI panel headlines
 }
 
-type authorMergeKey struct{ author, merge string }
+type mergedKey struct{ author, merge, scope string }
 
 func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
 	items, err := p.client.mergedSince(repo, now.Add(-widest))
@@ -160,9 +182,9 @@ func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
 	}
 
 	// Every window is a subset of the widest one, so one search feeds all of them.
-	counts := make(map[time.Duration]map[authorMergeKey]float64, len(windows))
+	counts := make(map[time.Duration]map[mergedKey]float64, len(windows))
 	for _, w := range windows {
-		counts[w] = map[authorMergeKey]float64{}
+		counts[w] = map[mergedKey]float64{}
 	}
 	for _, item := range items {
 		if item.PullRequest.MergedAt == nil {
@@ -174,7 +196,7 @@ func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
 			p.logger.Error("merge facts failed", "repo", repo, "pr", item.Number, "err", err)
 			return
 		}
-		k := authorMergeKey{author(item), mergeKind(facts)}
+		k := mergedKey{author(item), mergeKind(facts), scope(item, facts)}
 		for _, w := range windows {
 			if item.PullRequest.MergedAt.After(now.Add(-w)) {
 				counts[w][k]++
@@ -186,7 +208,9 @@ func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
 		label := windowLabel(w)
 		for _, a := range authors {
 			for _, m := range merges {
-				prMerged.WithLabelValues(repo, a, m, label).Set(counts[w][authorMergeKey{a, m}])
+				for _, s := range scopes {
+					prMerged.WithLabelValues(repo, a, m, s, label).Set(counts[w][mergedKey{a, m, s}])
+				}
 			}
 		}
 	}

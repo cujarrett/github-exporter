@@ -9,8 +9,8 @@ func TestAuthor(t *testing.T) {
 		want  string
 	}{
 		{name: "person", login: "cujarrett", want: "human"},
-		{name: "dependabot", login: "dependabot[bot]", want: "dependabot"},
-		{name: "another bot is not dependabot", login: "renovate[bot]", want: "human"},
+		{name: "dependabot", login: "dependabot[bot]", want: "bot"},
+		{name: "renovate is a bot too", login: "renovate[bot]", want: "bot"},
 	}
 
 	for _, c := range cases {
@@ -42,6 +42,35 @@ func TestMergeKind(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := mergeKind(c.facts); got != c.want {
 				t.Errorf("mergeKind() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestScope(t *testing.T) {
+	dependabot := prItem{User: struct {
+		Login string `json:"login"`
+	}{Login: "dependabot[bot]"}}
+	human := prItem{User: struct {
+		Login string `json:"login"`
+	}{Login: "cujarrett"}}
+
+	cases := []struct {
+		name  string
+		item  prItem
+		facts mergeFacts
+		want  string
+	}{
+		{name: "human PR is never in scope", item: human, facts: mergeFacts{branch: "some-feature"}, want: "human"},
+		{name: "grouped minor/patch bump", item: dependabot, facts: mergeFacts{branch: "dependabot/go_modules/api/non-breaking-abc123"}, want: "auto-candidate"},
+		{name: "grouped actions bump", item: dependabot, facts: mergeFacts{branch: "dependabot/github_actions/actions-abc123"}, want: "auto-candidate"},
+		{name: "ungrouped major bump", item: dependabot, facts: mergeFacts{branch: "dependabot/go_modules/api/go-1.27.0"}, want: "excluded"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := scope(c.item, c.facts); got != c.want {
+				t.Errorf("scope() = %q, want %q", got, c.want)
 			}
 		})
 	}

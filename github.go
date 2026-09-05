@@ -89,6 +89,7 @@ func (c *githubClient) listRepos() ([]string, error) {
 type mergeFacts struct {
 	mergedBy  string
 	autoMerge bool
+	branch    string
 }
 
 func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error) {
@@ -104,11 +105,14 @@ func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error
 		MergedBy struct {
 			Login string `json:"login"`
 		} `json:"merged_by"`
+		Head struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
 	}
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
 		return mergeFacts{}, err
 	}
-	f = mergeFacts{mergedBy: pr.MergedBy.Login}
+	f = mergeFacts{mergedBy: pr.MergedBy.Login, branch: pr.Head.Ref}
 
 	// GitHub records the person who armed auto-merge as the merger, so merged_by
 	// alone cannot tell an armed merge from a clicked one. Only the timeline can.
