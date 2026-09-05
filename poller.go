@@ -49,9 +49,9 @@ var prOpened = prometheus.NewGaugeVec(
 var prOpen = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "github_exporter_pr_open",
-		Help: "Pull requests currently open, by who opened it.",
+		Help: "Pull requests currently open, by who opened it and whether it's eligible for auto-merge.",
 	},
-	[]string{"repo", "author"},
+	[]string{"repo", "author", "scope"},
 )
 
 // Workflow runs on the default branch, so a pass rate reads as "did main stay
@@ -103,18 +103,22 @@ func mergeKind(f mergeFacts) string {
 	}
 }
 
-// scope classifies whether the PR could ever have been auto-merged. The branch
-// check is Dependabot's own grouping convention - non-breaking-/actions- for a
-// grouped minor/patch bump - and will need a second pattern once Renovate is
-// configured with its own auto-merge workflow.
-func scope(item prItem, f mergeFacts) string {
-	if author(item) != "bot" {
+// candidateScope classifies whether a PR could ever have been auto-merged, merged
+// or not. The branch check is Dependabot's own grouping convention -
+// non-breaking-/actions- for a grouped minor/patch bump - and will need a
+// second pattern once Renovate is configured with its own auto-merge workflow.
+func candidateScope(isBot bool, branch string) string {
+	if !isBot {
 		return "human"
 	}
-	if strings.Contains(f.branch, "/non-breaking-") || strings.Contains(f.branch, "/actions-") {
+	if strings.Contains(branch, "/non-breaking-") || strings.Contains(branch, "/actions-") {
 		return "auto-candidate"
 	}
 	return "excluded"
+}
+
+func scope(item prItem, f mergeFacts) string {
+	return candidateScope(author(item) == "bot", f.branch)
 }
 
 type poller struct {
@@ -259,12 +263,26 @@ func (p *poller) pollOpenNow(repo string) {
 		p.logger.Warn("hit search page limit, open count may be low", "repo", repo, "limit", searchPageSize)
 	}
 
-	counts := map[string]float64{}
+	type authorScopeKey struct{ author, scope string }
+	counts := map[authorScopeKey]float64{}
 	for _, item := range items {
-		counts[author(item)]++
+		a := author(item)
+		branch := ""
+		if a == "bot" {
+			var err error
+			branch, err = p.client.branchFor(repo, item.Number)
+			if err != nil {
+				pollErrorsTotal.WithLabelValues(repo).Inc()
+				p.logger.Error("branch lookup failed", "repo", repo, "pr", item.Number, "err", err)
+				continue
+			}
+		}
+		counts[authorScopeKey{a, candidateScope(a == "bot", branch)}]++
 	}
 	for _, a := range authors {
-		prOpen.WithLabelValues(repo, a).Set(counts[a])
+		for _, s := range scopes {
+			prOpen.WithLabelValues(repo, a, s).Set(counts[authorScopeKey{a, s}])
+		}
 	}
 }
 

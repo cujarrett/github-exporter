@@ -21,6 +21,9 @@ type githubClient struct {
 
 	factsMu sync.RWMutex
 	facts   map[string]mergeFacts
+
+	branchMu sync.RWMutex
+	branches map[string]string
 }
 
 type searchResult struct {
@@ -137,6 +140,34 @@ func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error
 	c.facts[key] = f
 	c.factsMu.Unlock()
 	return f, nil
+}
+
+// branchFor is the head branch of a PR that hasn't merged yet, so it can be
+// scope-classified while still open. A separate cache from mergeFactsFor:
+// caching that one for an open PR would freeze its merge outcome as "not
+// merged" forever, even after it actually merges.
+func (c *githubClient) branchFor(repo string, number int) (string, error) {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	c.branchMu.RLock()
+	b, ok := c.branches[key]
+	c.branchMu.RUnlock()
+	if ok {
+		return b, nil
+	}
+
+	var pr struct {
+		Head struct {
+			Ref string `json:"ref"`
+		} `json:"head"`
+	}
+	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
+		return "", err
+	}
+
+	c.branchMu.Lock()
+	c.branches[key] = pr.Head.Ref
+	c.branchMu.Unlock()
+	return pr.Head.Ref, nil
 }
 
 // getJSON issues an authenticated GET and decodes the body.
