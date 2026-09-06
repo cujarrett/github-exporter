@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -19,6 +20,13 @@ const searchPageSize = 100
 // (merged, opened, open) across ~20 repos blows through that in under 20
 // seconds without this, and every repo after that 403s for the rest of the poll.
 const minSearchInterval = 2200 * time.Millisecond
+
+// A throttled search clears on its own, so retrying beats losing the repo's
+// counts until the next poll. Four attempts covers ~15s of backoff.
+const (
+	searchAttempts  = 4
+	searchRetryBase = 2 * time.Second
+)
 
 type githubClient struct {
 	token      string
@@ -253,33 +261,67 @@ func (c *githubClient) throttleSearch() {
 // mergedSince, openedSince and openNow all share this - only the query string
 // differs between them.
 func (c *githubClient) searchPRs(q string) ([]prItem, error) {
-	c.throttleSearch()
-
 	endpoint := fmt.Sprintf("https://api.github.com/search/issues?q=%s&sort=created&order=asc&per_page=%d",
 		url.QueryEscape(q), searchPageSize)
 
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	var lastStatus int
+	for attempt := range searchAttempts {
+		c.throttleSearch()
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close() //nolint:errcheck
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github search returned %d for query %q", resp.StatusCode, q)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			var result searchResult
+			err := json.NewDecoder(resp.Body).Decode(&result)
+			resp.Body.Close() //nolint:errcheck
+			if err != nil {
+				return nil, err
+			}
+			return result.Items, nil
+		}
+
+		lastStatus = resp.StatusCode
+		wait := retryAfter(resp, attempt)
+		resp.Body.Close() //nolint:errcheck
+
+		// A 403 here is the search rate limit, not a permission problem, and it
+		// clears on its own. Anything else is not going to improve by waiting.
+		if lastStatus != http.StatusForbidden && lastStatus != http.StatusTooManyRequests {
+			break
+		}
+		time.Sleep(wait)
 	}
 
-	var result searchResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	return nil, fmt.Errorf("github search returned %d for query %q", lastStatus, q)
+}
+
+// retryAfter honours GitHub's own backoff headers when it sends them and falls
+// back to doubling, so a throttled poll waits seconds rather than losing the
+// window until the next tick.
+func retryAfter(resp *http.Response, attempt int) time.Duration {
+	if v := resp.Header.Get("Retry-After"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			return time.Duration(secs) * time.Second
+		}
 	}
-	return result.Items, nil
+	if v := resp.Header.Get("X-RateLimit-Reset"); v != "" {
+		if unix, err := strconv.ParseInt(v, 10, 64); err == nil {
+			if d := time.Until(time.Unix(unix, 0)); d > 0 && d < time.Minute {
+				return d
+			}
+		}
+	}
+	return time.Duration(1<<attempt) * searchRetryBase
 }
 
 // mergedSince returns PRs merged in repo after cutoff, oldest first is not
