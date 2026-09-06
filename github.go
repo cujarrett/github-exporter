@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 )
@@ -121,29 +120,19 @@ func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error
 		Head struct {
 			Ref string `json:"ref"`
 		} `json:"head"`
+		AutoMerge *struct{} `json:"auto_merge"`
 	}
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
 		return mergeFacts{}, err
 	}
-	f = mergeFacts{mergedBy: pr.MergedBy.Login, branch: pr.Head.Ref}
-
-	// GitHub records the person who armed auto-merge as the merger, so merged_by
-	// alone cannot tell an armed merge from a clicked one. Only the timeline can.
-	if f.mergedBy != "" && !strings.HasSuffix(f.mergedBy, "[bot]") {
-		var events []struct {
-			Event string `json:"event"`
-		}
-		// One page is enough: auto_merge_enabled lands early, and a PR with more
-		// than 100 timeline events is not the common case worth paginating for.
-		if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/timeline?per_page=100", c.org, repo, number), &events); err != nil {
-			return mergeFacts{}, err
-		}
-		for _, e := range events {
-			if e.Event == "auto_merge_enabled" {
-				f.autoMerge = true
-				break
-			}
-		}
+	// GitHub keeps auto_merge populated after the merge and names whoever armed
+	// it as the merger, so merged_by alone cannot tell an armed merge from a
+	// clicked one. Renovate arms its own PRs, so this is the only signal that
+	// separates them from a workflow merging with its own token.
+	f = mergeFacts{
+		mergedBy:  pr.MergedBy.Login,
+		branch:    pr.Head.Ref,
+		autoMerge: pr.AutoMerge != nil,
 	}
 
 	c.factsMu.Lock()
