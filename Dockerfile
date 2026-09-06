@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w -X main.version=0.1.0" -o github-exporter .
 
 # ---- runtime ----
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN addgroup -S app && adduser -S app -G app
 
