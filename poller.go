@@ -104,14 +104,14 @@ func mergeKind(f mergeFacts) string {
 }
 
 // candidateScope classifies whether a PR could ever have been auto-merged, merged
-// or not. The branch check is Dependabot's own grouping convention -
-// non-breaking-/actions- for a grouped minor/patch bump - and will need a
-// second pattern once Renovate is configured with its own auto-merge workflow.
+// or not. Both bots name a grouped minor/patch branch after the group, so
+// Dependabot's non-breaking-<hash>/actions-<hash> and Renovate's bare
+// renovate/non-breaking both match. A major always gets its own branch name.
 func candidateScope(isBot bool, branch string) string {
 	if !isBot {
 		return "human"
 	}
-	if strings.Contains(branch, "/non-breaking-") || strings.Contains(branch, "/actions-") {
+	if strings.Contains(branch, "/non-breaking") || strings.Contains(branch, "/actions-") {
 		return "auto-candidate"
 	}
 	return "excluded"

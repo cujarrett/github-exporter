@@ -65,6 +65,8 @@ func TestScope(t *testing.T) {
 		{name: "grouped minor/patch bump", item: dependabot, facts: mergeFacts{branch: "dependabot/go_modules/api/non-breaking-abc123"}, want: "auto-candidate"},
 		{name: "grouped actions bump", item: dependabot, facts: mergeFacts{branch: "dependabot/github_actions/actions-abc123"}, want: "auto-candidate"},
 		{name: "ungrouped major bump", item: dependabot, facts: mergeFacts{branch: "dependabot/go_modules/api/go-1.27.0"}, want: "excluded"},
+		{name: "renovate grouped bump", item: dependabot, facts: mergeFacts{branch: "renovate/non-breaking"}, want: "auto-candidate"},
+		{name: "renovate major bump", item: dependabot, facts: mergeFacts{branch: "renovate/typescript-7.x"}, want: "excluded"},
 	}
 
 	for _, c := range cases {
