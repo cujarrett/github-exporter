@@ -66,6 +66,14 @@ var workflowRuns = prometheus.NewGaugeVec(
 
 // A failed poll and a quiet week both leave prMerged flat, so an expired token
 // is invisible without this.
+var prOpenBlocked = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_pr_open_blocked",
+		Help: "Pull requests with auto-merge armed that GitHub is refusing to merge, almost always a failed required check. Automation is on and a person is still needed.",
+	},
+	[]string{"repo"},
+)
+
 var pollErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "github_exporter_poll_errors_total",
@@ -75,7 +83,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMerged, prOpened, prOpen, pollErrorsTotal, workflowRuns)
+	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns)
 }
 
 // author says who opened the PR. Any GitHub App account - Dependabot, Renovate,
@@ -265,20 +273,25 @@ func (p *poller) pollOpenNow(repo string) {
 
 	type authorScopeKey struct{ author, scope string }
 	counts := map[authorScopeKey]float64{}
+	blocked := 0.0
 	for _, item := range items {
 		a := author(item)
 		branch := ""
 		if a == "bot" {
-			var err error
-			branch, err = p.client.branchFor(repo, item.Number)
+			facts, err := p.client.openFactsFor(repo, item.Number)
 			if err != nil {
 				pollErrorsTotal.WithLabelValues(repo).Inc()
-				p.logger.Error("branch lookup failed", "repo", repo, "pr", item.Number, "err", err)
+				p.logger.Error("open PR lookup failed", "repo", repo, "pr", item.Number, "err", err)
 				continue
+			}
+			branch = facts.branch
+			if facts.autoMerge && facts.blocked {
+				blocked++
 			}
 		}
 		counts[authorScopeKey{a, candidateScope(a == "bot", branch)}]++
 	}
+	prOpenBlocked.WithLabelValues(repo).Set(blocked)
 	for _, a := range authors {
 		for _, s := range scopes {
 			prOpen.WithLabelValues(repo, a, s).Set(counts[authorScopeKey{a, s}])

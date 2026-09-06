@@ -36,8 +36,6 @@ type githubClient struct {
 	factsMu sync.RWMutex
 	facts   map[string]mergeFacts
 
-	branchMu sync.RWMutex
-	branches map[string]string
 
 	searchMu   sync.Mutex
 	lastSearch time.Time
@@ -149,35 +147,38 @@ func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error
 	return f, nil
 }
 
-// branchFor is the head branch of a PR that hasn't merged yet, so it can be
-// scope-classified while still open. A separate cache from mergeFactsFor:
-// caching that one for an open PR would freeze its merge outcome as "not
-// merged" forever, even after it actually merges.
-func (c *githubClient) branchFor(repo string, number int) (string, error) {
-	key := fmt.Sprintf("%s#%d", repo, number)
-	c.branchMu.RLock()
-	b, ok := c.branches[key]
-	c.branchMu.RUnlock()
-	if ok {
-		return b, nil
-	}
+// openFacts is what an open PR looks like right now. Deliberately not cached:
+// caching an open PR would freeze its state as "not merged, not blocked"
+// forever, even after that stops being true.
+type openFacts struct {
+	branch    string
+	autoMerge bool
+	blocked   bool
+}
 
+// openFactsFor reads the head branch so a PR can be scope-classified, plus
+// whether auto-merge is armed and GitHub is refusing to merge it anyway.
+// mergeable_state is "blocked" when a required check has failed or is missing,
+// which is the one state where automation is armed and still costing a person
+// their attention.
+func (c *githubClient) openFactsFor(repo string, number int) (openFacts, error) {
 	var pr struct {
 		Head struct {
 			Ref string `json:"ref"`
 		} `json:"head"`
+		AutoMerge      *struct{} `json:"auto_merge"`
+		MergeableState string    `json:"mergeable_state"`
 	}
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
-		return "", err
+		return openFacts{}, err
 	}
-
-	c.branchMu.Lock()
-	c.branches[key] = pr.Head.Ref
-	c.branchMu.Unlock()
-	return pr.Head.Ref, nil
+	return openFacts{
+		branch:    pr.Head.Ref,
+		autoMerge: pr.AutoMerge != nil,
+		blocked:   pr.MergeableState == "blocked",
+	}, nil
 }
 
-// getJSON issues an authenticated GET and decodes the body.
 func (c *githubClient) getJSON(endpoint string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {

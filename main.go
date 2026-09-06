@@ -73,7 +73,6 @@ func main() {
 		org:        org,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		facts:      map[string]mergeFacts{},
-		branches:   map[string]string{},
 	}
 	poller := newPoller(client, repos, logger)
 
