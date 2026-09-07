@@ -11,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	// The runtime image carries no zoneinfo, so without this TZ falls back to
+	// UTC and the calendar-day count rolls over at the wrong hour.
+	_ "time/tzdata"
+
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 

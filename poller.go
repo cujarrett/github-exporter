@@ -32,7 +32,7 @@ var windows = []time.Duration{24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time
 var prMerged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "github_exporter_pr_merged",
-		Help: "Pull requests merged within a window, by who opened it, how it reached main, and whether it was ever eligible for the auto-merge workflow.",
+		Help: "Pull requests merged within a window, by who opened it, how it reached main, and whether it was ever eligible for the auto-merge workflow. The window label is a rolling duration, except \"today\", which is the calendar day so far.",
 	},
 	[]string{"repo", "author", "merge", "scope", "window"},
 )
@@ -194,9 +194,10 @@ func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
 	}
 
 	// Every window is a subset of the widest one, so one search feeds all of them.
-	counts := make(map[time.Duration]map[mergedKey]float64, len(windows))
-	for _, w := range windows {
-		counts[w] = map[mergedKey]float64{}
+	cutoffs := mergedCutoffs(now)
+	counts := make(map[string]map[mergedKey]float64, len(cutoffs))
+	for label := range cutoffs {
+		counts[label] = map[mergedKey]float64{}
 	}
 	for _, item := range items {
 		if item.PullRequest.MergedAt == nil {
@@ -209,23 +210,35 @@ func (p *poller) pollMerged(repo string, now time.Time, widest time.Duration) {
 			return
 		}
 		k := mergedKey{author(item), mergeKind(facts), scope(item, facts)}
-		for _, w := range windows {
-			if item.PullRequest.MergedAt.After(now.Add(-w)) {
-				counts[w][k]++
+		for label, cutoff := range cutoffs {
+			if item.PullRequest.MergedAt.After(cutoff) {
+				counts[label][k]++
 			}
 		}
 	}
 
-	for _, w := range windows {
-		label := windowLabel(w)
+	for label := range cutoffs {
 		for _, a := range authors {
 			for _, m := range merges {
 				for _, s := range scopes {
-					prMerged.WithLabelValues(repo, a, m, s, label).Set(counts[w][mergedKey{a, m, s}])
+					prMerged.WithLabelValues(repo, a, m, s, label).Set(counts[label][mergedKey{a, m, s}])
 				}
 			}
 		}
 	}
+}
+
+// mergedCutoffs pairs every window label with the moment it starts. "today" is
+// a calendar day in the process timezone rather than a rolling window, so a
+// per-day chart can draw a bar that grows through the day instead of one that
+// only appears once the day is over.
+func mergedCutoffs(now time.Time) map[string]time.Time {
+	cutoffs := make(map[string]time.Time, len(windows)+1)
+	for _, w := range windows {
+		cutoffs[windowLabel(w)] = now.Add(-w)
+	}
+	cutoffs["today"] = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return cutoffs
 }
 
 func (p *poller) pollOpened(repo string, now time.Time, widest time.Duration) {
