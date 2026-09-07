@@ -27,7 +27,9 @@ var conclusions = []string{"success", "failure", "cancelled", "skipped"}
 
 // The windows the dashboard graphs. Each poll fetches once out to the widest
 // and buckets locally, so it's one search call per repo, not one per window.
-var windows = []time.Duration{24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour, 365 * 24 * time.Hour}
+// Nothing wider than 30d belongs here: search caps a page at 100 items, and the
+// widest window also sets how many per-PR lookups every poll costs.
+var windows = []time.Duration{24 * time.Hour, 7 * 24 * time.Hour, 30 * 24 * time.Hour}
 
 var prMerged = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
@@ -177,7 +179,7 @@ func (p *poller) pollRepo(repo string) {
 	p.pollMerged(repo, now, widest)
 	p.pollOpened(repo, now, widest)
 	p.pollOpenNow(repo)
-	p.pollWorkflows(repo, now.Add(-windows[2])) // 30d, the one figure the CI panel headlines
+	p.pollWorkflows(repo, now.Add(-widest)) // 30d, the one figure the CI panel headlines
 }
 
 type mergedKey struct{ author, merge, scope string }
