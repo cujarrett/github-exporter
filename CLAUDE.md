@@ -39,7 +39,7 @@ Go Prometheus exporter, single binary, no frameworks. Polls the GitHub search AP
 | GET | `/metrics` | Prometheus metrics |
 
 ## Conventions
-- No frameworks - stdlib `net/http` only, including for the outbound GitHub call. See [README.md](README.md) for why `go-github` was rejected: this repo's own Dependabot would then have to track a dependency that exists only to save ~15 lines of hand-rolled JSON decoding.
+- No frameworks - stdlib `net/http` only, including for the outbound GitHub call. See [README.md](README.md) for why `go-github` was rejected: this repo's own Renovate would then have to track a dependency that exists only to save ~15 lines of hand-rolled JSON decoding.
 - `slog` for structured logging
 - Graceful shutdown via `signal.NotifyContext`
 - Errors returned as `{"error":"..."}` JSON where the API surfaces errors (only `/healthz` does today)
