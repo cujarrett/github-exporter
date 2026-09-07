@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -113,13 +114,23 @@ func mergeKind(f mergeFacts) string {
 	}
 }
 
+// The label Renovate puts on every update it is configured to merge on its own.
+const autoMergeLabel = "automerge"
+
 // candidateScope classifies whether a PR could ever have been auto-merged, merged
-// or not. Both bots name a grouped minor/patch branch after the group, so
-// Dependabot's non-breaking-<hash>/actions-<hash> and Renovate's bare
-// renovate/non-breaking both match. A major always gets its own branch name.
-func candidateScope(isBot bool, branch string) string {
+// or not. The label is the bot stating its own intent, which is the only signal
+// that survives a repo turning grouping off - an ungrouped minor and a major
+// both get a per-package branch name.
+//
+// The branch match below covers PRs merged before the label existed. The widest
+// window is 30 days, so nothing on the dashboard predates the label after
+// 2026-10-07 and the branch match can be deleted then.
+func candidateScope(isBot bool, branch string, labels []string) string {
 	if !isBot {
 		return "human"
+	}
+	if slices.Contains(labels, autoMergeLabel) {
+		return "auto-candidate"
 	}
 	if strings.Contains(branch, "/non-breaking") || strings.Contains(branch, "/actions-") {
 		return "auto-candidate"
@@ -128,7 +139,7 @@ func candidateScope(isBot bool, branch string) string {
 }
 
 func scope(item prItem, f mergeFacts) string {
-	return candidateScope(author(item) == "bot", f.branch)
+	return candidateScope(author(item) == "bot", f.branch, f.labels)
 }
 
 type poller struct {
@@ -292,6 +303,7 @@ func (p *poller) pollOpenNow(repo string) {
 	for _, item := range items {
 		a := author(item)
 		branch := ""
+		var labels []string
 		if a == "bot" {
 			facts, err := p.client.openFactsFor(repo, item.Number)
 			if err != nil {
@@ -300,11 +312,12 @@ func (p *poller) pollOpenNow(repo string) {
 				continue
 			}
 			branch = facts.branch
+			labels = facts.labels
 			if facts.autoMerge && facts.blocked {
 				blocked++
 			}
 		}
-		counts[authorScopeKey{a, candidateScope(a == "bot", branch)}]++
+		counts[authorScopeKey{a, candidateScope(a == "bot", branch, labels)}]++
 	}
 	prOpenBlocked.WithLabelValues(repo).Set(blocked)
 	for _, a := range authors {

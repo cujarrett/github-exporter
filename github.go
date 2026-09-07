@@ -108,6 +108,7 @@ type mergeFacts struct {
 	mergedBy  string
 	autoMerge bool
 	branch    string
+	labels    []string
 }
 
 func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error) {
@@ -127,6 +128,9 @@ func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error
 			Ref string `json:"ref"`
 		} `json:"head"`
 		AutoMerge *struct{} `json:"auto_merge"`
+		Labels    []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 	}
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
 		return mergeFacts{}, err
@@ -139,6 +143,7 @@ func (c *githubClient) mergeFactsFor(repo string, number int) (mergeFacts, error
 		mergedBy:  pr.MergedBy.Login,
 		branch:    pr.Head.Ref,
 		autoMerge: pr.AutoMerge != nil,
+		labels:    labelNames(pr.Labels),
 	}
 
 	c.factsMu.Lock()
@@ -154,6 +159,7 @@ type openFacts struct {
 	branch    string
 	autoMerge bool
 	blocked   bool
+	labels    []string
 }
 
 // openFactsFor reads the head branch so a PR can be scope-classified, plus
@@ -168,6 +174,9 @@ func (c *githubClient) openFactsFor(repo string, number int) (openFacts, error) 
 		} `json:"head"`
 		AutoMerge      *struct{} `json:"auto_merge"`
 		MergeableState string    `json:"mergeable_state"`
+		Labels         []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 	}
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d", c.org, repo, number), &pr); err != nil {
 		return openFacts{}, err
@@ -176,7 +185,18 @@ func (c *githubClient) openFactsFor(repo string, number int) (openFacts, error) 
 		branch:    pr.Head.Ref,
 		autoMerge: pr.AutoMerge != nil,
 		blocked:   pr.MergeableState == "blocked",
+		labels:    labelNames(pr.Labels),
 	}, nil
+}
+
+func labelNames(labels []struct {
+	Name string `json:"name"`
+}) []string {
+	out := make([]string, 0, len(labels))
+	for _, l := range labels {
+		out = append(out, l.Name)
+	}
+	return out
 }
 
 func (c *githubClient) getJSON(endpoint string, out any) error {
