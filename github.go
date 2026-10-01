@@ -189,6 +189,53 @@ func (c *githubClient) openFactsFor(repo string, number int) (openFacts, error) 
 	}, nil
 }
 
+// repoSettings decides whether GitHub can merge a bot's PR the moment its
+// checks pass. A nil field means the token could not see that setting.
+type repoSettings struct {
+	allowAutoMerge *bool
+	requiredChecks *int
+}
+
+type branchResponse struct {
+	Protected  bool `json:"protected"`
+	Protection *struct {
+		RequiredStatusChecks *struct {
+			Contexts []string `json:"contexts"`
+		} `json:"required_status_checks"`
+	} `json:"protection"`
+}
+
+func (c *githubClient) settingsFor(repo string) (repoSettings, error) {
+	var r struct {
+		AllowAutoMerge *bool  `json:"allow_auto_merge"`
+		DefaultBranch  string `json:"default_branch"`
+	}
+	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s", c.org, repo), &r); err != nil {
+		return repoSettings{}, err
+	}
+	var b branchResponse
+	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s", c.org, repo, url.PathEscape(r.DefaultBranch)), &b); err != nil {
+		return repoSettings{}, err
+	}
+	return repoSettings{allowAutoMerge: r.AllowAutoMerge, requiredChecks: requiredChecks(b)}, nil
+}
+
+// requiredChecks counts the status checks branch protection requires.
+// Unprotected: zero, since nothing gates the merge.
+// Protected with no protection detail: nil, because the token cannot see it.
+func requiredChecks(b branchResponse) *int {
+	n := 0
+	switch {
+	case !b.Protected:
+		return &n
+	case b.Protection == nil:
+		return nil
+	case b.Protection.RequiredStatusChecks != nil:
+		n = len(b.Protection.RequiredStatusChecks.Contexts)
+	}
+	return &n
+}
+
 func labelNames(labels []struct {
 	Name string `json:"name"`
 }) []string {

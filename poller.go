@@ -77,6 +77,28 @@ var prOpenBlocked = prometheus.NewGaugeVec(
 	[]string{"repo"},
 )
 
+// Off means an armed auto-merge never fires, so Renovate falls back to merging
+// on its own next visit, hours later. Nothing fails, so only this shows it.
+var repoAllowAutoMerge = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_repo_allow_auto_merge",
+		Help: "1 when the repo lets GitHub merge a PR as soon as its required checks pass.",
+	},
+	[]string{"repo"},
+)
+
+var repoRequiredChecks = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_repo_required_checks",
+		Help: "Status checks the default branch requires before a merge. Zero means auto-merge has nothing to wait on.",
+	},
+	[]string{"repo"},
+)
+
+// Repo settings change by hand a few times a year, so hourly is plenty and
+// keeps two extra calls per repo off every five-minute poll.
+const settingsInterval = time.Hour
+
 var pollErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "github_exporter_poll_errors_total",
@@ -86,7 +108,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns)
+	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, repoAllowAutoMerge, repoRequiredChecks)
 }
 
 // author says who opened the PR. Any GitHub App account - Dependabot, Renovate,
@@ -143,9 +165,10 @@ func scope(item prItem, f mergeFacts) string {
 }
 
 type poller struct {
-	client *githubClient
-	repos  []string
-	logger *slog.Logger
+	client     *githubClient
+	repos      []string
+	logger     *slog.Logger
+	settingsAt time.Time
 }
 
 func newPoller(client *githubClient, repos []string, logger *slog.Logger) *poller {
@@ -176,8 +199,37 @@ func (p *poller) pollAll() {
 		}
 		repos = discovered
 	}
+	settingsDue := time.Since(p.settingsAt) >= settingsInterval
+	if settingsDue {
+		p.settingsAt = time.Now()
+	}
 	for _, repo := range repos {
 		p.pollRepo(repo)
+		if settingsDue {
+			p.pollSettings(repo)
+		}
+	}
+}
+
+func (p *poller) pollSettings(repo string) {
+	s, err := p.client.settingsFor(repo)
+	if err != nil {
+		pollErrorsTotal.WithLabelValues(repo).Inc()
+		p.logger.Error("settings poll failed", "repo", repo, "err", err)
+		return
+	}
+	if s.allowAutoMerge == nil || s.requiredChecks == nil {
+		p.logger.Warn("token cannot see repo merge settings", "repo", repo)
+	}
+	if s.allowAutoMerge != nil {
+		v := 0.0
+		if *s.allowAutoMerge {
+			v = 1
+		}
+		repoAllowAutoMerge.WithLabelValues(repo).Set(v)
+	}
+	if s.requiredChecks != nil {
+		repoRequiredChecks.WithLabelValues(repo).Set(float64(*s.requiredChecks))
 	}
 }
 

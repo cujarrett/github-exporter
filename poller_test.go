@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestAuthor(t *testing.T) {
 	cases := []struct {
@@ -79,3 +82,34 @@ func TestScope(t *testing.T) {
 		})
 	}
 }
+
+func TestRequiredChecks(t *testing.T) {
+	protected := func(contexts []string) branchResponse {
+		var b branchResponse
+		if err := json.Unmarshal([]byte(`{"protected":true,"protection":{"required_status_checks":{"contexts":[]}}}`), &b); err != nil {
+			t.Fatal(err)
+		}
+		b.Protection.RequiredStatusChecks.Contexts = contexts
+		return b
+	}
+	cases := []struct {
+		name string
+		b    branchResponse
+		want *int
+	}{
+		{name: "unprotected gates nothing", b: branchResponse{}, want: ptr(0)},
+		{name: "protection hidden from the token", b: branchResponse{Protected: true}, want: nil},
+		{name: "protected with no checks", b: protected(nil), want: ptr(0)},
+		{name: "protected with one check", b: protected([]string{"test"}), want: ptr(1)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := requiredChecks(c.b)
+			if (got == nil) != (c.want == nil) || (got != nil && *got != *c.want) {
+				t.Errorf("requiredChecks() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func ptr(n int) *int { return &n }
