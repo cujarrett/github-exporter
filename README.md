@@ -71,3 +71,14 @@ No restart. The binary reads the file on each GitHub call and kubelet refreshes 
 ### Rotating `HOMELAB_WORKSPACES_PAT`
 
 Separate from the token above, and easy to confuse. `github-exporter-read` is a Kubernetes Secret the running binary reads to query GitHub. `HOMELAB_WORKSPACES_PAT` is a GitHub Actions secret only CI uses to bump this image's tag in `homelab-workspaces`, shared across every repo that deploys there and rotated centrally - see [GitHub Tokens](https://github.com/cujarrett/homelab/blob/main/docs/github-tokens.md) in the homelab repo. Rotating one leaves the other alone.
+
+## Blog stats
+
+The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it daily on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser. `prs.json` in the same gist caches every PR it has already classified.
+
+It runs outside the cluster, so nothing in the cluster faces readers. It needs two settings on this repo:
+
+| Name | Kind | Value |
+|---|---|---|
+| `BLOG_STATS_GIST_TOKEN` | Actions secret | Fine-grained PAT with only **Gists: Read and write** |
+| `BLOG_STATS_GIST_ID` | Actions variable | ID of the gist the post reads |

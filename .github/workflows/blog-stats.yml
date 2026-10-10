@@ -1,0 +1,22 @@
+name: blog-stats
+
+# Keeps the live Renovate merge count on the blog's automerge post current.
+on:
+  schedule:
+    - cron: "17 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/blog-stats.sh
+        env:
+          # Every repo with Renovate PRs is public, so the workflow token can read them.
+          GH_TOKEN: ${{ github.token }}
+          GIST_TOKEN: ${{ secrets.BLOG_STATS_GIST_TOKEN }}
+          GIST_ID: ${{ vars.BLOG_STATS_GIST_ID }}
