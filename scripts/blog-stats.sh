@@ -9,7 +9,6 @@ since=2026-09-06T05:00:00Z
 : "${GH_TOKEN:?}" "${GIST_TOKEN:?}" "${GIST_ID:?}"
 
 # GitHub records whoever armed auto-merge as the merger, so autoMergeRequest is the signal.
-# Search returns at most 1,000 results.
 query='query($q: String!, $endCursor: String) {
   search(query: $q, type: ISSUE, first: 100, after: $endCursor) {
     pageInfo { hasNextPage endCursor }
@@ -17,10 +16,18 @@ query='query($q: String!, $endCursor: String) {
   }
 }'
 
-prs=$(gh api graphql --paginate -f query="$query" \
-  -f q="user:$owner is:pr is:merged author:app/renovate merged:>=$since" \
-  --jq '.data.search.nodes[] | {merged_at: .mergedAt, renovate: (.autoMergeRequest != null or .mergedBy.__typename == "Bot")}' |
-  jq -s .)
+# Search returns at most 1,000 results, so it runs once per 30-day window.
+# Each window ends a second before the next starts, so no PR is counted twice.
+windows=$(jq -rn --arg since "$since" '
+  ($since | fromdateiso8601) as $start | (30 * 86400) as $step |
+  range($start; now; $step) | "\(todate)..\(. + $step - 1 | todate)"')
+
+prs=$(for window in $windows; do
+  # exit fails the pipeline, so one failed window stops the run instead of undercounting.
+  gh api graphql --paginate -f query="$query" \
+    -f q="user:$owner is:pr is:merged author:app/renovate merged:$window" \
+    --jq '.data.search.nodes[] | {merged_at: .mergedAt, renovate: (.autoMergeRequest != null or .mergedBy.__typename == "Bot")}' || exit
+done | jq -s .)
 
 stats=$(jq -c '{
   since: "2026-09-06",

@@ -74,7 +74,7 @@ Separate from the token above, and easy to confuse. `github-exporter-read` is a 
 
 ## Blog stats
 
-The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it hourly on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser through the GitHub API. One GraphQL search returns every PR with how it merged, so nothing is cached between runs, and a run that changes nothing writes nothing. Search returns at most 1,000 PRs, so the count stops growing at 1,000 until the query is split by date.
+The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it hourly on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser through the GitHub API. One GraphQL search returns every PR with how it merged, so nothing is cached between runs, and a run that changes nothing writes nothing. Search returns at most 1,000 results, so the script searches one 30-day window at a time.
 
 It runs outside the cluster, so nothing in the cluster faces readers. Reading PRs uses the workflow's own token, because every repo with Renovate PRs is public. Writing the gist needs a token of its own.
 
