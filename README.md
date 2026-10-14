@@ -74,11 +74,34 @@ Separate from the token above, and easy to confuse. `github-exporter-read` is a 
 
 ## Blog stats
 
-The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it daily on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser. `prs.json` in the same gist caches every PR it has already classified.
+The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it hourly on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser through the GitHub API. `prs.json` in the same gist caches every PR it has already classified.
 
-It runs outside the cluster, so nothing in the cluster faces readers. It needs two settings on this repo:
+It runs outside the cluster, so nothing in the cluster faces readers. Reading PRs uses the workflow's own token, because every repo with Renovate PRs is public. Writing the gist needs a token of its own.
 
-| Name | Kind | Value |
-|---|---|---|
-| `BLOG_STATS_GIST_TOKEN` | Actions secret | Fine-grained PAT with only **Gists: Read and write** |
-| `BLOG_STATS_GIST_ID` | Actions variable | ID of the gist the post reads |
+### Setting it up
+
+1. Create the gist the post reads. The ID is the last part of the URL it prints.
+   ```bash
+   echo '{}' > stats.json
+   gh gist create --public stats.json -d "Renovate merge count for blog.mattjarrett.dev"
+   ```
+2. Create the token at **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**.
+   - Name: `blog-stats-gist`
+   - Expiration: one year
+   - Repository access: **Public repositories**
+   - Account permissions: **Gists: Read and write**, nothing else
+3. Store both on this repo. The secret prompts for the token so it never lands in shell history.
+   ```bash
+   gh secret set BLOG_STATS_GIST_TOKEN -R cujarrett/github-exporter
+   gh variable set BLOG_STATS_GIST_ID -R cujarrett/github-exporter --body <gist-id>
+   ```
+   Both also show under **Settings → Secrets and variables → Actions**, the secret on the Secrets tab and the ID on the Variables tab.
+4. Run it once instead of waiting for the schedule, then check the gist has a `stats.json` with counts.
+   ```bash
+   gh workflow run blog-stats -R cujarrett/github-exporter
+   gh run watch -R cujarrett/github-exporter
+   ```
+
+### Rotating `BLOG_STATS_GIST_TOKEN`
+
+When it expires the workflow fails on the gist read and the post keeps showing the last count. Generate a new token with the same settings as step 2 and run `gh secret set BLOG_STATS_GIST_TOKEN -R cujarrett/github-exporter` again. Nothing else changes.
