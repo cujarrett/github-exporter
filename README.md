@@ -43,34 +43,14 @@ Polls the GitHub API for pull request activity across every repo the account own
 
 ## Deployment
 
-Runs on the homelab cluster via the `Api` Crossplane composition. Image: `ghcr.io/cujarrett/github-exporter`. ARM64.
+ARM64 image built by CI, pushed to GHCR and deployed to the homelab cluster by ArgoCD.
 
-Config comes from the `github-exporter-config` ConfigMap in `homelab-workspaces`, applied by ArgoCD. The token is a hand-created Secret, since no secret value reaches git:
+The token is a fine-grained PAT with read-only access to all repositories, so the exporter can find new ones. It needs these permissions:
 
-```bash
-kubectl create secret generic github-exporter-token -n github-exporter \
-  --from-literal=GITHUB_TOKEN=<token>
-```
-
-### Rotating `github-exporter-read`
-
-A fine-grained PAT on `cujarrett`, read-only across all repositories, with `Metadata: read`, `Pull requests: read` and `Actions: read`. All repositories rather than a list, because the exporter discovers them. If the log says `token cannot see repo merge settings`, add `Administration: read`.
-
-```bash
-print -n "Paste new token: "
-read -rs NEW_TOKEN
-echo
-kubectl patch secret github-exporter-token -n github-exporter \
-  --type='json' \
-  -p='[{"op":"replace","path":"/data/GITHUB_TOKEN","value":"'"$(echo -n "$NEW_TOKEN" | base64)"'"}]'
-unset NEW_TOKEN
-```
-
-No restart. The binary reads the file on each GitHub call and kubelet refreshes the mount within about a minute.
-
-### Rotating `HOMELAB_WORKSPACES_PAT`
-
-Separate from the token above, and easy to confuse. `github-exporter-read` is a Kubernetes Secret the running binary reads to query GitHub. `HOMELAB_WORKSPACES_PAT` is a GitHub Actions secret only CI uses to bump this image's tag in `homelab-workspaces`, shared across every repo that deploys there and rotated centrally - see [GitHub Tokens](https://github.com/cujarrett/homelab/blob/main/docs/github-tokens.md) in the homelab repo. Rotating one leaves the other alone.
+- `Metadata`: read
+- `Pull requests`: read
+- `Actions`: read
+- `Administration`: read, only if the log says `token cannot see repo merge settings`
 
 ## Blog stats
 
