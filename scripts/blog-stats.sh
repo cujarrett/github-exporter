@@ -22,18 +22,39 @@ windows=$(jq -rn --arg since "$since" '
   ($since | fromdateiso8601) as $start | (30 * 86400) as $step |
   range($start; now; $step) | "\(todate)..\(. + $step - 1 | todate)"')
 
+search() {
+  gh api graphql --paginate -f query="$query" -f q="$1" \
+    --jq '.data.search.nodes[] | {merged_at: .mergedAt, renovate: (.autoMergeRequest != null or .mergedBy.__typename == "Bot")}'
+}
+
 prs=$(for window in $windows; do
   # exit fails the pipeline, so one failed window stops the run instead of undercounting.
-  gh api graphql --paginate -f query="$query" \
-    -f q="user:$owner is:pr is:merged author:app/renovate merged:$window" \
-    --jq '.data.search.nodes[] | {merged_at: .mergedAt, renovate: (.autoMergeRequest != null or .mergedBy.__typename == "Bot")}' || exit
+  search "user:$owner is:pr is:merged author:app/renovate merged:$window" || exit
 done | jq -s .)
 
-stats=$(jq -c '{
+# The 30 days before go-live, for the before-and-after chart on mattjarrett.dev.
+# Dependabot still opened most dependency PRs then, and every one was merged by hand.
+before=$(jq -rn --arg since "$since" '($since | fromdateiso8601) as $t | "\($t - 30 * 86400 | todate)..\($t - 1 | todate)"')
+earlier=$(for author in app/renovate app/dependabot; do
+  search "user:$owner is:pr is:merged author:$author merged:$before" || exit
+done | jq -s .)
+
+# One row per America/Chicago day. Stepping from noon keeps each date once across DST.
+days=$(TZ=America/Chicago jq -c --arg from "${before%%..*}" --argjson earlier "$earlier" '
+  def day: fromdateiso8601 | strflocaltime("%Y-%m-%d");
+  (($earlier + .) | group_by(.merged_at | day)
+    | map({key: (.[0].merged_at | day), value: {auto: ([.[] | select(.renovate)] | length), hand: ([.[] | select(.renovate | not)] | length)}})
+    | from_entries) as $counts
+  | [range(($from | fromdateiso8601) + 43200; now + 43200; 86400) | strflocaltime("%Y-%m-%d")]
+  | map({date: ., auto: ($counts[.].auto // 0), hand: ($counts[.].hand // 0)})
+' <<<"$prs")
+
+stats=$(jq -c --argjson days "$days" '{
   since: "2026-09-06",
   renovate: [.[] | select(.renovate)] | length,
   me: [.[] | select(.renovate | not)] | length,
-  updated: ([.[].merged_at] | max)
+  updated: ([.[].merged_at] | max),
+  days: $days
 }' <<<"$prs")
 
 # Each write adds a revision, and the post downloads the gist's revision list.

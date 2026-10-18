@@ -56,6 +56,8 @@ The token is a fine-grained PAT with read-only access to all repositories, so th
 
 The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it hourly on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser through the GitHub API. One GraphQL search returns every PR with how it merged, so nothing is cached between runs, and a run that changes nothing writes nothing. Search returns at most 1,000 results, so the script searches one 30-day window at a time.
 
+`stats.json` also carries `days`, merges per America/Chicago day split into automatic and by hand, starting 30 days before go-live. Those earlier days include Dependabot PRs, since Dependabot opened most dependency PRs then. The homelab section on mattjarrett.dev charts them through [homelab-stats](https://github.com/cujarrett/homelab-stats).
+
 It runs outside the cluster, so nothing in the cluster faces readers. Reading PRs uses the workflow's own token, because every repo with Renovate PRs is public. Writing the gist needs a token of its own.
 
 ### Setting it up
