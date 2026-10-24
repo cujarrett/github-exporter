@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -192,8 +193,9 @@ func (c *githubClient) openFactsFor(repo string, number int) (openFacts, error) 
 // repoSettings decides whether GitHub can merge a bot's PR the moment its
 // checks pass. A nil field means the token could not see that setting.
 type repoSettings struct {
-	allowAutoMerge *bool
-	requiredChecks *int
+	allowAutoMerge      *bool
+	requiredChecks      *int
+	vulnerabilityAlerts *bool
 }
 
 type branchResponse struct {
@@ -217,7 +219,67 @@ func (c *githubClient) settingsFor(repo string) (repoSettings, error) {
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s", c.org, repo, url.PathEscape(r.DefaultBranch)), &b); err != nil {
 		return repoSettings{}, err
 	}
-	return repoSettings{allowAutoMerge: r.AllowAutoMerge, requiredChecks: requiredChecks(b)}, nil
+	alerts, err := c.vulnerabilityAlerts(repo)
+	if err != nil {
+		return repoSettings{}, err
+	}
+	return repoSettings{allowAutoMerge: r.AllowAutoMerge, requiredChecks: requiredChecks(b), vulnerabilityAlerts: alerts}, nil
+}
+
+// vulnerabilityAlerts reads whether Dependabot alerts are on, which Renovate's
+// security fast path depends on.
+// 204: on. 404: off. 403: the token cannot see the setting, so nil.
+func (c *githubClient) vulnerabilityAlerts(repo string) (*bool, error) {
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/vulnerability-alerts", c.org, repo)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	on := resp.StatusCode == http.StatusNoContent
+	switch resp.StatusCode {
+	case http.StatusNoContent, http.StatusNotFound:
+		return &on, nil
+	case http.StatusForbidden:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("github returned %d for %s", resp.StatusCode, endpoint)
+	}
+}
+
+// renovateErrored counts updates on the repo's Renovate Dependency Dashboard
+// that failed to build a branch. Nil means the repo has no dashboard.
+func (c *githubClient) renovateErrored(repo string) (*int, error) {
+	var issues []struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues?state=open&per_page=100&creator=%s",
+		c.org, repo, url.QueryEscape("renovate[bot]"))
+	if err := c.getJSON(endpoint, &issues); err != nil {
+		return nil, err
+	}
+	for _, issue := range issues {
+		if issue.Title == "Dependency Dashboard" {
+			n := erroredUpdates(issue.Body)
+			return &n, nil
+		}
+	}
+	return nil, nil
+}
+
+// Renovate gives each errored update a retry checkbox carrying this marker.
+// Nothing else on the dashboard uses it.
+func erroredUpdates(body string) int {
+	return strings.Count(body, "<!-- retry-branch=")
 }
 
 // requiredChecks counts the status checks branch protection requires.

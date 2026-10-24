@@ -95,6 +95,35 @@ var repoRequiredChecks = prometheus.NewGaugeVec(
 	[]string{"repo"},
 )
 
+// Off means Renovate never hears about a vulnerable dependency, so security
+// fixes wait out the normal release age like any other update.
+var repoVulnerabilityAlerts = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_repo_vulnerability_alerts",
+		Help: "1 when Dependabot alerts are on for the repo.",
+	},
+	[]string{"repo"},
+)
+
+// The token silently losing a permission would otherwise leave the settings
+// gauges missing, and an alert on a missing series never fires.
+var repoSettingsVisible = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_repo_settings_visible",
+		Help: "1 when the token can read every repo setting this exporter reports.",
+	},
+	[]string{"repo"},
+)
+
+// An errored update has no PR, so nothing else shows it.
+var renovateErrored = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_renovate_errored",
+		Help: "Updates on the repo's Renovate Dependency Dashboard that failed to build a branch.",
+	},
+	[]string{"repo"},
+)
+
 // Repo settings change by hand a few times a year, so hourly is plenty and
 // keeps two extra calls per repo off every five-minute poll.
 const settingsInterval = time.Hour
@@ -108,7 +137,8 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, repoAllowAutoMerge, repoRequiredChecks)
+	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, repoAllowAutoMerge, repoRequiredChecks,
+		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored)
 }
 
 // author says who opened the PR. Any GitHub App account - Dependabot, Renovate,
@@ -218,8 +248,26 @@ func (p *poller) pollSettings(repo string) {
 		p.logger.Error("settings poll failed", "repo", repo, "err", err)
 		return
 	}
-	if s.allowAutoMerge == nil || s.requiredChecks == nil {
+	visible := 1.0
+	if s.allowAutoMerge == nil || s.requiredChecks == nil || s.vulnerabilityAlerts == nil {
+		visible = 0
 		p.logger.Warn("token cannot see repo merge settings", "repo", repo)
+	}
+	repoSettingsVisible.WithLabelValues(repo).Set(visible)
+	if s.vulnerabilityAlerts != nil {
+		v := 0.0
+		if *s.vulnerabilityAlerts {
+			v = 1
+		}
+		repoVulnerabilityAlerts.WithLabelValues(repo).Set(v)
+	}
+
+	errored, err := p.client.renovateErrored(repo)
+	if err != nil {
+		pollErrorsTotal.WithLabelValues(repo).Inc()
+		p.logger.Error("renovate dashboard poll failed", "repo", repo, "err", err)
+	} else if errored != nil {
+		renovateErrored.WithLabelValues(repo).Set(float64(*errored))
 	}
 	if s.allowAutoMerge != nil {
 		v := 0.0

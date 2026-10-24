@@ -28,6 +28,9 @@ Polls the GitHub API for pull request activity across every repo the account own
 | `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch in the last 30 days. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |
 | `github_exporter_repo_allow_auto_merge` | gauge | `repo` | 1 when the repo's "Allow auto-merge" setting is on. Off means Renovate's armed merges never fire and it merges on its own next visit instead, hours later. Read hourly |
 | `github_exporter_repo_required_checks` | gauge | `repo` | Status checks the default branch requires before a merge. Zero means auto-merge has nothing to wait on. Read hourly |
+| `github_exporter_repo_vulnerability_alerts` | gauge | `repo` | 1 when Dependabot alerts are on. Off means Renovate never learns a dependency is vulnerable, so its fix waits out the normal release age. Read hourly |
+| `github_exporter_repo_settings_visible` | gauge | `repo` | 1 when the token can read every setting above. Zero means those gauges are missing for the repo, and alerts built on them cannot fire. Read hourly |
+| `github_exporter_renovate_errored` | gauge | `repo` | Updates on the Renovate Dependency Dashboard that failed to build a branch. These have no PR, so nothing else shows them. Absent when the repo has no dashboard. Read hourly |
 | `github_exporter_poll_errors_total` | counter | `repo` | Failed GitHub polls. Alert on this - a dead token otherwise looks like a quiet week |
 
 ## Environment variables
@@ -50,7 +53,7 @@ The token is a fine-grained PAT with read-only access to all repositories, so th
 - `Metadata`: read
 - `Pull requests`: read
 - `Actions`: read
-- `Administration`: read, only if the log says `token cannot see repo merge settings`
+- `Administration`: read, for the repo settings gauges
 
 ## Blog stats
 

@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestErroredUpdates(t *testing.T) {
+	body := "## Errored\n\n" +
+		" - [ ] <!-- retry-branch=renovate/pin-dependencies -->chore(deps): pin dependencies\n\n" +
+		"## Pending Status Checks\n\n" +
+		" - [ ] <!-- unpend-branch=renovate/argo-cd-10.x -->chore(deps): update helm release argo-cd\n\n" +
+		"## Open\n\n" +
+		" - [ ] <!-- rebase-branch=renovate/mariadb-13.x -->chore(deps): update mariadb\n"
+	if got := erroredUpdates(body); got != 1 {
+		t.Errorf("erroredUpdates() = %d, want 1", got)
+	}
+}
+
 func TestAuthor(t *testing.T) {
 	cases := []struct {
 		name  string
