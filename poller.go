@@ -124,6 +124,17 @@ var renovateErrored = prometheus.NewGaugeVec(
 	[]string{"repo"},
 )
 
+// Updates Renovate has found but holds back until they are minimumReleaseAge
+// old. Each is a PR that opens on its own, so they are the fixes already on
+// the way.
+var renovatePending = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_renovate_pending",
+		Help: "1 for each update on the repo's Renovate Dependency Dashboard waiting out its release age.",
+	},
+	[]string{"repo", "update"},
+)
+
 // Repo settings change by hand a few times a year, so hourly is plenty and
 // keeps two extra calls per repo off every five-minute poll.
 const settingsInterval = time.Hour
@@ -138,7 +149,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 
 func init() {
 	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, repoAllowAutoMerge, repoRequiredChecks,
-		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored)
+		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored, renovatePending)
 }
 
 // author says who opened the PR. Any GitHub App account - Dependabot, Renovate,
@@ -262,12 +273,17 @@ func (p *poller) pollSettings(repo string) {
 		repoVulnerabilityAlerts.WithLabelValues(repo).Set(v)
 	}
 
-	errored, err := p.client.renovateErrored(repo)
+	dashboard, err := p.client.renovateDashboard(repo)
 	if err != nil {
 		pollErrorsTotal.WithLabelValues(repo).Inc()
 		p.logger.Error("renovate dashboard poll failed", "repo", repo, "err", err)
-	} else if errored != nil {
-		renovateErrored.WithLabelValues(repo).Set(float64(*errored))
+	} else if dashboard != nil {
+		renovateErrored.WithLabelValues(repo).Set(float64(erroredUpdates(*dashboard)))
+		// An update that opened its PR leaves the list, so its series must go too.
+		renovatePending.DeletePartialMatch(prometheus.Labels{"repo": repo})
+		for _, update := range pendingUpdates(*dashboard) {
+			renovatePending.WithLabelValues(repo, update).Set(1)
+		}
 	}
 	if s.allowAutoMerge != nil {
 		v := 0.0

@@ -300,9 +300,9 @@ func (c *githubClient) vulnerabilityAlerts(repo string) (*bool, error) {
 	}
 }
 
-// renovateErrored counts updates on the repo's Renovate Dependency Dashboard
-// that failed to build a branch. Nil means the repo has no dashboard.
-func (c *githubClient) renovateErrored(repo string) (*int, error) {
+// renovateDashboard returns the body of the repo's Renovate Dependency
+// Dashboard. Nil means the repo has no dashboard.
+func (c *githubClient) renovateDashboard(repo string) (*string, error) {
 	var issues []struct {
 		Title string `json:"title"`
 		Body  string `json:"body"`
@@ -314,8 +314,7 @@ func (c *githubClient) renovateErrored(repo string) (*int, error) {
 	}
 	for _, issue := range issues {
 		if issue.Title == "Dependency Dashboard" {
-			n := erroredUpdates(issue.Body)
-			return &n, nil
+			return &issue.Body, nil
 		}
 	}
 	return nil, nil
@@ -325,6 +324,24 @@ func (c *githubClient) renovateErrored(repo string) (*int, error) {
 // Nothing else on the dashboard uses it.
 func erroredUpdates(body string) int {
 	return strings.Count(body, "<!-- retry-branch=")
+}
+
+// pendingUpdates lists the updates waiting out minimumReleaseAge, which get
+// an unpend checkbox. The commit prefix ("chore(deps): ") is dropped.
+func pendingUpdates(body string) []string {
+	var updates []string
+	for _, line := range strings.Split(body, "\n") {
+		_, after, found := strings.Cut(line, "<!-- unpend-branch=")
+		if !found {
+			continue
+		}
+		_, title, _ := strings.Cut(after, "-->")
+		if _, rest, ok := strings.Cut(title, ": "); ok {
+			title = rest
+		}
+		updates = append(updates, strings.TrimSpace(title))
+	}
+	return updates
 }
 
 // requiredChecks counts the status checks branch protection requires.

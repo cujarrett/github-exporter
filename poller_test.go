@@ -17,6 +17,19 @@ func TestErroredUpdates(t *testing.T) {
 	}
 }
 
+func TestPendingUpdates(t *testing.T) {
+	body := "## Pending Status Checks\n\n" +
+		" - [ ] <!-- unpend-branch=renovate/loki-7.x -->chore(deps): update helm release loki to v7.5.0\n" +
+		" - [ ] <!-- unpend-branch=renovate/redis-8.x -->chore(deps): update redis docker tag to v8\n\n" +
+		"## Open\n\n" +
+		" - [ ] <!-- rebase-branch=renovate/mariadb-13.x -->chore(deps): update mariadb\n"
+	got := pendingUpdates(body)
+	want := []string{"update helm release loki to v7.5.0", "update redis docker tag to v8"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("pendingUpdates() = %q, want %q", got, want)
+	}
+}
+
 func TestAuthor(t *testing.T) {
 	cases := []struct {
 		name  string
