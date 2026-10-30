@@ -26,6 +26,7 @@ Polls the GitHub API for pull request activity across every repo the account own
 | `github_exporter_pr_opened` | gauge | `repo`, `author`, `window` | PRs opened inside a window, regardless of current state. Same `window` values as above |
 | `github_exporter_pr_open` | gauge | `repo`, `author`, `scope` | PRs open right now - a snapshot, not a window. Same `scope` values as above |
 | `github_exporter_workflow_runs` | gauge | `repo`, `conclusion` | Workflow runs on the default branch in the last 30 days. `conclusion` is `success`, `failure`, `cancelled` or `skipped`. Runs still in flight carry no conclusion and are not counted |
+| `github_exporter_workflow_latest_failed` | gauge | `repo`, `workflow` | `1` when the newest finished run of that workflow on the default branch failed, otherwise `0`. Only workflows on the first page of 100 runs in the last 30 days appear |
 | `github_exporter_repo_allow_auto_merge` | gauge | `repo` | 1 when the repo's "Allow auto-merge" setting is on. Off means Renovate's armed merges never fire and it merges on its own next visit instead, hours later. Read hourly |
 | `github_exporter_repo_required_checks` | gauge | `repo` | Status checks the default branch requires before a merge. Zero means auto-merge has nothing to wait on. Read hourly |
 | `github_exporter_repo_vulnerability_alerts` | gauge | `repo` | 1 when Dependabot alerts are on. Off means Renovate never learns a dependency is vulnerable, so its fix waits out the normal release age. Read hourly |

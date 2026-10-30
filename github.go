@@ -391,6 +391,7 @@ func (c *githubClient) getJSON(endpoint string, out any) error {
 }
 
 type workflowRun struct {
+	Name       string `json:"name"`
 	Conclusion string `json:"conclusion"`
 }
 

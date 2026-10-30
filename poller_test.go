@@ -138,3 +138,17 @@ func TestRequiredChecks(t *testing.T) {
 }
 
 func ptr(n int) *int { return &n }
+
+func TestLatestConclusions(t *testing.T) {
+	// Newest first, as GitHub returns them.
+	runs := []workflowRun{
+		{Name: "pin-check", Conclusion: "failure"},
+		{Name: "ci", Conclusion: "success"},
+		{Name: "pin-check", Conclusion: "success"},
+		{Name: "ci", Conclusion: "failure"},
+	}
+	got := latestConclusions(runs)
+	if got["pin-check"] != "failure" || got["ci"] != "success" || len(got) != 2 {
+		t.Errorf("latestConclusions() = %v, want pin-check=failure ci=success", got)
+	}
+}

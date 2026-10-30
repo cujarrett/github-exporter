@@ -67,6 +67,16 @@ var workflowRuns = prometheus.NewGaugeVec(
 	[]string{"repo", "conclusion"},
 )
 
+// One series per workflow seen on the first page of runs, so a scheduled check that
+// keeps failing on main shows up even while the repo's overall pass rate looks fine.
+var workflowLatestFailed = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_workflow_latest_failed",
+		Help: "1 if the most recent finished default-branch run of this workflow failed, otherwise 0.",
+	},
+	[]string{"repo", "workflow"},
+)
+
 // A failed poll and a quiet week both leave prMerged flat, so an expired token
 // is invisible without this.
 var prOpenBlocked = prometheus.NewGaugeVec(
@@ -148,7 +158,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, repoAllowAutoMerge, repoRequiredChecks,
+	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, workflowLatestFailed, repoAllowAutoMerge, repoRequiredChecks,
 		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored, renovatePending)
 }
 
@@ -464,4 +474,26 @@ func (p *poller) pollWorkflows(repo string, cutoff time.Time) {
 	for _, c := range conclusions {
 		workflowRuns.WithLabelValues(repo, c).Set(counts[c])
 	}
+
+	// Cleared first, so a renamed or deleted workflow drops out instead of alerting forever.
+	workflowLatestFailed.DeletePartialMatch(prometheus.Labels{"repo": repo})
+	for name, conclusion := range latestConclusions(runs) {
+		failed := 0.0
+		if conclusion == "failure" {
+			failed = 1
+		}
+		workflowLatestFailed.WithLabelValues(repo, name).Set(failed)
+	}
+}
+
+// latestConclusions keeps each workflow's newest result.
+// GitHub lists runs newest first, so the first run seen per name wins.
+func latestConclusions(runs []workflowRun) map[string]string {
+	latest := make(map[string]string)
+	for _, r := range runs {
+		if _, seen := latest[r.Name]; !seen {
+			latest[r.Name] = r.Conclusion
+		}
+	}
+	return latest
 }
