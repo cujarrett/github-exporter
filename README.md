@@ -56,6 +56,12 @@ The token is a fine-grained PAT with read-only access to all repositories, so th
 - `Actions`: read
 - `Administration`: read, for the repo settings gauges
 
+To rotate the cluster's copy, regenerate the PAT, then run this. It prompts for the value.
+
+```bash
+~/Developer/homelab/scripts/rotate-secret/rotate-secret.sh platform/github-exporter/github-exporter-token github-exporter/deployment/github-exporter
+```
+
 ## Blog stats
 
 The automerge post on blog.mattjarrett.dev shows a live count of Renovate PRs merged since 2026-09-06. [scripts/blog-stats.sh](scripts/blog-stats.sh) computes it with the same merge rules as the exporter, and [the blog-stats workflow](.github/workflows/blog-stats.yml) runs it hourly on GitHub-hosted runners. It writes `stats.json` to a public gist, which the post fetches in the browser through the GitHub API. One GraphQL search returns every PR with how it merged, so nothing is cached between runs, and a run that changes nothing writes nothing. Search returns at most 1,000 results, so the script searches one 30-day window at a time.
@@ -82,6 +88,8 @@ It runs outside the cluster, so nothing in the cluster faces readers. Reading PR
    gh variable set BLOG_STATS_GIST_ID -R cujarrett/github-exporter --body <gist-id>
    ```
    Both also show under **Settings → Secrets and variables → Actions**, the secret on the Secrets tab and the ID on the Variables tab.
+
+   To rotate the token later, regenerate `blog-stats-gist` and run only the `gh secret set` line.
 4. Run it once instead of waiting for the schedule, then check the gist has a `stats.json` with counts.
    ```bash
    gh workflow run blog-stats -R cujarrett/github-exporter
