@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w -X main.version=0.1.0" -o github-exporter .
 
 # ---- runtime ----
-FROM ghcr.io/cujarrett/base-go:static-debian13@sha256:923a9853189eef3956ae9cd09aa9d5846f9f0568e0b188ec1415d43754a736b2
+FROM ghcr.io/cujarrett/base-go:static-debian13@sha256:d1f5d2a974de81dffc620668df57baf021f1dab8d8b90968428dd00d20a3a090
 
 WORKDIR /app
 
