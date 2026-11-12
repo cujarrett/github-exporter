@@ -1,3 +1,7 @@
+# github-exporter
+
+Go Prometheus exporter, single binary, no frameworks. It polls the GitHub API for pull request activity across the account's repos. Gauges split by repo, who opened the PR, how it merged, and whether it was eligible for auto-merge.
+
 ## Rules
 
 - **Never run `git commit`, `git push`, or any git command that writes to or modifies repository history or remotes.** If a task requires committing or pushing, stop and tell the user to run the git command manually.
@@ -21,10 +25,6 @@ Before telling the user to commit, always run `/security-review`. It reviews the
 - **DRY is not a law.** A little copy-paste beats a complex abstraction built for two cases.
 - **No FOLD** (Fear Of Looking Dumb). If something is too complex, say so. That's a signal to simplify, not a personal failing.
 
-# github-exporter
-
-Go Prometheus exporter, single binary, no frameworks. Polls the GitHub search API for merged PRs and counts them by repo and merge category.
-
 ## Commands
 | Command | What it does |
 |---|---|
@@ -40,7 +40,7 @@ Go Prometheus exporter, single binary, no frameworks. Polls the GitHub search AP
 | GET | `/metrics` | Prometheus metrics |
 
 ## Conventions
-- No frameworks - stdlib `net/http` only, including for the outbound GitHub call. See [README.md](README.md) for why `go-github` was rejected: this repo's own Renovate would then have to track a dependency that exists only to save ~15 lines of hand-rolled JSON decoding.
+- No frameworks. Stdlib `net/http` only, including for the outbound GitHub call. See [README.md](README.md) for why `go-github` was rejected: this repo's own Renovate would then have to track a dependency that exists only to save ~15 lines of hand-rolled JSON decoding.
 - `slog` for structured logging
 - Graceful shutdown via `signal.NotifyContext`
 - Errors returned as `{"error":"..."}` JSON where the API surfaces errors (only `/healthz` does today)
