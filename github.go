@@ -195,6 +195,7 @@ func (c *githubClient) openFactsFor(repo string, number int) (openFacts, error) 
 // checks pass. A nil field means the token could not see that setting.
 type repoSettings struct {
 	allowAutoMerge      *bool
+	deleteBranchOnMerge *bool
 	requiredChecks      *int
 	vulnerabilityAlerts *bool
 }
@@ -219,7 +220,7 @@ func (c *githubClient) settingsFor(repo string) (repoSettings, error) {
 	if err := c.getJSON(fmt.Sprintf("https://api.github.com/repos/%s/%s/branches/%s", c.org, repo, url.PathEscape(r.DefaultBranch)), &b); err != nil {
 		return repoSettings{}, err
 	}
-	autoMerge, err := c.autoMergeAllowed(repo)
+	autoMerge, deleteBranch, err := c.mergeToggles(repo)
 	if err != nil {
 		return repoSettings{}, err
 	}
@@ -227,48 +228,50 @@ func (c *githubClient) settingsFor(repo string) (repoSettings, error) {
 	if err != nil {
 		return repoSettings{}, err
 	}
-	return repoSettings{allowAutoMerge: autoMerge, requiredChecks: requiredChecks(b), vulnerabilityAlerts: alerts}, nil
+	return repoSettings{allowAutoMerge: autoMerge, deleteBranchOnMerge: deleteBranch, requiredChecks: requiredChecks(b), vulnerabilityAlerts: alerts}, nil
 }
 
-// autoMergeAllowed reads the "Allow auto-merge" setting from GraphQL.
-// REST leaves allow_auto_merge out for a fine-grained token, even one with Administration read.
-func (c *githubClient) autoMergeAllowed(repo string) (*bool, error) {
+// mergeToggles reads "Allow auto-merge" and "Automatically delete head branches" from GraphQL.
+// REST leaves both out for a fine-grained token, even one with Administration read.
+func (c *githubClient) mergeToggles(repo string) (autoMerge, deleteBranch *bool, err error) {
 	body, err := json.Marshal(map[string]any{
-		"query":     "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { autoMergeAllowed } }",
+		"query":     "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { autoMergeAllowed deleteBranchOnMerge } }",
 		"variables": map[string]string{"owner": c.org, "name": repo},
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req, err := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github returned %d for graphql autoMergeAllowed", resp.StatusCode)
+		return nil, nil, fmt.Errorf("github returned %d for graphql merge toggles", resp.StatusCode)
 	}
 
 	var out struct {
 		Data struct {
 			Repository *struct {
-				AutoMergeAllowed bool `json:"autoMergeAllowed"`
+				AutoMergeAllowed    bool `json:"autoMergeAllowed"`
+				DeleteBranchOnMerge bool `json:"deleteBranchOnMerge"`
 			} `json:"repository"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if out.Data.Repository == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return &out.Data.Repository.AutoMergeAllowed, nil
+	r := out.Data.Repository
+	return &r.AutoMergeAllowed, &r.DeleteBranchOnMerge, nil
 }
 
 // vulnerabilityAlerts reads whether Dependabot alerts are on, which Renovate's

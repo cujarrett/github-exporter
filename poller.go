@@ -97,6 +97,15 @@ var repoAllowAutoMerge = prometheus.NewGaugeVec(
 	[]string{"repo"},
 )
 
+// Off leaves every merged PR's branch behind, so stale branches pile up.
+var repoDeleteBranchOnMerge = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_repo_delete_branch_on_merge",
+		Help: "1 when GitHub deletes a PR's branch once it merges.",
+	},
+	[]string{"repo"},
+)
+
 var repoRequiredChecks = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "github_exporter_repo_required_checks",
@@ -158,7 +167,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 )
 
 func init() {
-	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, workflowLatestFailed, repoAllowAutoMerge, repoRequiredChecks,
+	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, workflowLatestFailed, repoAllowAutoMerge, repoDeleteBranchOnMerge, repoRequiredChecks,
 		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored, renovatePending)
 }
 
@@ -270,7 +279,7 @@ func (p *poller) pollSettings(repo string) {
 		return
 	}
 	visible := 1.0
-	if s.allowAutoMerge == nil || s.requiredChecks == nil || s.vulnerabilityAlerts == nil {
+	if s.allowAutoMerge == nil || s.deleteBranchOnMerge == nil || s.requiredChecks == nil || s.vulnerabilityAlerts == nil {
 		visible = 0
 		p.logger.Warn("token cannot see repo merge settings", "repo", repo)
 	}
@@ -301,6 +310,13 @@ func (p *poller) pollSettings(repo string) {
 			v = 1
 		}
 		repoAllowAutoMerge.WithLabelValues(repo).Set(v)
+	}
+	if s.deleteBranchOnMerge != nil {
+		v := 0.0
+		if *s.deleteBranchOnMerge {
+			v = 1
+		}
+		repoDeleteBranchOnMerge.WithLabelValues(repo).Set(v)
 	}
 	if s.requiredChecks != nil {
 		repoRequiredChecks.WithLabelValues(repo).Set(float64(*s.requiredChecks))
