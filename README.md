@@ -33,6 +33,8 @@ Polls the GitHub API for pull request activity across every repo the account own
 | `github_exporter_repo_vulnerability_alerts` | gauge | `repo` | 1 when Dependabot alerts are on. Off means Renovate never learns a dependency is vulnerable, so its fix waits out the normal release age. Read hourly |
 | `github_exporter_repo_settings_visible` | gauge | `repo` | 1 when the token can read every setting above. Zero means those gauges are missing for the repo, and alerts built on them cannot fire. Read hourly |
 | `github_exporter_renovate_errored` | gauge | `repo` | Updates on the Renovate Dependency Dashboard that failed to build a branch. These have no PR, so nothing else shows them. Absent when the repo has no dashboard. Read hourly |
+| `github_exporter_dependency_alert` | gauge | `repo`, `id`, `package`, `ecosystem`, `severity`, `scope`, `relationship`, `installed_version`, `fixed_version` | `1` for each open Dependabot alert. GitHub builds these from the lockfile, so child packages are included. `id` is the CVE, or the GHSA when no CVE exists yet. `severity` is `Critical`, `High`, `Medium` or `Low`. `scope` is `runtime` or `development`. `relationship` is `direct` or `transitive`. `fixed_version` is empty when no fix is out. Read hourly |
+| `github_exporter_dependency_alerts_visible` | gauge | `repo` | `1` when the token can read the repo's Dependabot alerts. Zero means alerts are off for the repo or the token lacks the permission, so an empty list there is unknown. Read hourly |
 | `github_exporter_poll_errors_total` | counter | `repo` | Failed GitHub polls. Alert on this - a dead token otherwise looks like a quiet week |
 
 ## Environment variables
@@ -56,6 +58,7 @@ The token is a fine-grained PAT with read-only access to all repositories, so th
 - `Pull requests`: read
 - `Actions`: read
 - `Administration`: read, for the repo settings gauges
+- `Dependabot alerts`: read, for the dependency alert gauges
 
 To rotate the cluster's copy, regenerate the PAT, then run this. It prompts for the value.
 

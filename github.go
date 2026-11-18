@@ -303,6 +303,125 @@ func (c *githubClient) vulnerabilityAlerts(repo string) (*bool, error) {
 	}
 }
 
+// dependencyAlert is one open Dependabot alert.
+type dependencyAlert struct {
+	id           string
+	pkg          string
+	ecosystem    string
+	severity     string
+	scope        string
+	relationship string
+	installed    string
+	fixed        string
+}
+
+type alertItem struct {
+	Dependency struct {
+		Package struct {
+			Ecosystem string `json:"ecosystem"`
+			Name      string `json:"name"`
+		} `json:"package"`
+		Scope        string `json:"scope"`
+		Relationship string `json:"relationship"`
+		Requirement  string `json:"version_requirement"`
+	} `json:"dependency"`
+	Advisory struct {
+		GHSA     string `json:"ghsa_id"`
+		CVE      string `json:"cve_id"`
+		Severity string `json:"severity"`
+	} `json:"security_advisory"`
+	Vulnerability struct {
+		FirstPatched *struct {
+			Identifier string `json:"identifier"`
+		} `json:"first_patched_version"`
+	} `json:"security_vulnerability"`
+}
+
+// The endpoint pages by cursor. Ten pages of 100 covers any repo here.
+const alertPages = 10
+
+// dependencyAlerts lists the repo's open Dependabot alerts.
+// GitHub builds them from the lockfile, so child packages are included.
+// 403 or 404: alerts are off, or the token lacks Dependabot alerts read, so the bool is false.
+func (c *githubClient) dependencyAlerts(repo string) ([]dependencyAlert, bool, error) {
+	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/%s/dependabot/alerts?state=open&per_page=100", c.org, repo)
+	var alerts []dependencyAlert
+	for range alertPages {
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, false, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+c.token)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, false, err
+		}
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close() //nolint:errcheck
+			return nil, false, nil
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close() //nolint:errcheck
+			return nil, false, fmt.Errorf("github returned %d for %s", resp.StatusCode, endpoint)
+		}
+		var batch []alertItem
+		err = json.NewDecoder(resp.Body).Decode(&batch)
+		resp.Body.Close() //nolint:errcheck
+		if err != nil {
+			return nil, false, err
+		}
+		for _, item := range batch {
+			alerts = append(alerts, alertFrom(item))
+		}
+		endpoint = nextPage(resp.Header.Get("Link"))
+		if endpoint == "" {
+			break
+		}
+	}
+	return alerts, true, nil
+}
+
+// alertFrom flattens one API alert into label values.
+// Severity is title case so it matches the labels Trivy writes.
+func alertFrom(item alertItem) dependencyAlert {
+	a := dependencyAlert{
+		id:           item.Advisory.CVE,
+		pkg:          item.Dependency.Package.Name,
+		ecosystem:    item.Dependency.Package.Ecosystem,
+		scope:        item.Dependency.Scope,
+		relationship: item.Dependency.Relationship,
+		installed:    item.Dependency.Requirement,
+	}
+	if a.id == "" {
+		a.id = item.Advisory.GHSA
+	}
+	if sev := item.Advisory.Severity; sev != "" {
+		a.severity = strings.ToUpper(sev[:1]) + sev[1:]
+	}
+	if item.Vulnerability.FirstPatched != nil {
+		a.fixed = item.Vulnerability.FirstPatched.Identifier
+	}
+	return a
+}
+
+// nextPage reads the rel="next" URL from a Link header. Empty means last page.
+// A URL on any other host is dropped, so the token only ever goes to GitHub.
+func nextPage(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		target, rel, found := strings.Cut(part, ";")
+		if !found || strings.TrimSpace(rel) != `rel="next"` {
+			continue
+		}
+		next := strings.Trim(strings.TrimSpace(target), "<>")
+		if strings.HasPrefix(next, "https://api.github.com/") {
+			return next
+		}
+	}
+	return ""
+}
+
 // renovateDashboard returns the body of the repo's Renovate Dependency
 // Dashboard. Nil means the repo has no dashboard.
 func (c *githubClient) renovateDashboard(repo string) (*string, error) {

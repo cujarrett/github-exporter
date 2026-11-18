@@ -152,3 +152,48 @@ func TestLatestConclusions(t *testing.T) {
 		t.Errorf("latestConclusions() = %v, want pin-check=failure ci=success", got)
 	}
 }
+
+func TestAlertFrom(t *testing.T) {
+	body := `{
+		"dependency": {"package": {"ecosystem": "npm", "name": "minimatch"}, "scope": "development", "relationship": "transitive", "version_requirement": "9.0.9"},
+		"security_advisory": {"ghsa_id": "GHSA-g3hv-75wg-m249", "cve_id": "CVE-2026-118764", "severity": "medium"},
+		"security_vulnerability": {"first_patched_version": {"identifier": "11.0.1"}}
+	}`
+	var item alertItem
+	if err := json.Unmarshal([]byte(body), &item); err != nil {
+		t.Fatal(err)
+	}
+	want := dependencyAlert{id: "CVE-2026-118764", pkg: "minimatch", ecosystem: "npm", severity: "Medium", scope: "development", relationship: "transitive", installed: "9.0.9", fixed: "11.0.1"}
+	if got := alertFrom(item); got != want {
+		t.Errorf("alertFrom() = %+v, want %+v", got, want)
+	}
+
+	// No CVE yet and no fix yet: the GHSA stands in and fixed stays empty.
+	item.Advisory.CVE = ""
+	item.Vulnerability.FirstPatched = nil
+	got := alertFrom(item)
+	if got.id != "GHSA-g3hv-75wg-m249" || got.fixed != "" {
+		t.Errorf("alertFrom() id = %q fixed = %q, want the GHSA and no fix", got.id, got.fixed)
+	}
+}
+
+func TestNextPage(t *testing.T) {
+	cases := []struct {
+		name string
+		link string
+		want string
+	}{
+		{name: "next", link: `<https://api.github.com/repositories/1/dependabot/alerts?after=abc>; rel="next"`, want: "https://api.github.com/repositories/1/dependabot/alerts?after=abc"},
+		{name: "prev then next", link: `<https://api.github.com/a?before=x>; rel="prev", <https://api.github.com/a?after=y>; rel="next"`, want: "https://api.github.com/a?after=y"},
+		{name: "last page", link: `<https://api.github.com/a?before=x>; rel="prev"`, want: ""},
+		{name: "no header", link: "", want: ""},
+		{name: "other host", link: `<https://example.com/a>; rel="next"`, want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nextPage(tc.link); got != tc.want {
+				t.Errorf("nextPage() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

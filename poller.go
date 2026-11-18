@@ -154,6 +154,25 @@ var renovatePending = prometheus.NewGaugeVec(
 	[]string{"repo", "update"},
 )
 
+// One series per open Dependabot alert, so a dashboard can list them.
+// relationship: direct or transitive. Transitive is a child package.
+var dependencyAlertOpen = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_dependency_alert",
+		Help: "1 for each open Dependabot alert on the repo's dependencies, child packages included.",
+	},
+	[]string{"repo", "id", "package", "ecosystem", "severity", "scope", "relationship", "installed_version", "fixed_version"},
+)
+
+// Zero means an empty alert list for the repo is unknown, not clean.
+var dependencyAlertsVisible = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "github_exporter_dependency_alerts_visible",
+		Help: "1 when the token can read the repo's Dependabot alerts.",
+	},
+	[]string{"repo"},
+)
+
 // Repo settings change by hand a few times a year, so hourly is plenty and
 // keeps two extra calls per repo off every five-minute poll.
 const settingsInterval = time.Hour
@@ -168,7 +187,7 @@ var pollErrorsTotal = prometheus.NewCounterVec(
 
 func init() {
 	prometheus.MustRegister(prMerged, prOpened, prOpen, prOpenBlocked, pollErrorsTotal, workflowRuns, workflowLatestFailed, repoAllowAutoMerge, repoDeleteBranchOnMerge, repoRequiredChecks,
-		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored, renovatePending)
+		repoVulnerabilityAlerts, repoSettingsVisible, renovateErrored, renovatePending, dependencyAlertOpen, dependencyAlertsVisible)
 }
 
 // author says who opened the PR. Any GitHub App account - Dependabot, Renovate,
@@ -267,6 +286,7 @@ func (p *poller) pollAll() {
 		p.pollRepo(repo)
 		if settingsDue {
 			p.pollSettings(repo)
+			p.pollDependencyAlerts(repo)
 		}
 	}
 }
@@ -320,6 +340,25 @@ func (p *poller) pollSettings(repo string) {
 	}
 	if s.requiredChecks != nil {
 		repoRequiredChecks.WithLabelValues(repo).Set(float64(*s.requiredChecks))
+	}
+}
+
+func (p *poller) pollDependencyAlerts(repo string) {
+	alerts, visible, err := p.client.dependencyAlerts(repo)
+	if err != nil {
+		pollErrorsTotal.WithLabelValues(repo).Inc()
+		p.logger.Error("dependency alerts poll failed", "repo", repo, "err", err)
+		return
+	}
+	// A fixed alert leaves the list, so its series must go too.
+	dependencyAlertOpen.DeletePartialMatch(prometheus.Labels{"repo": repo})
+	if !visible {
+		dependencyAlertsVisible.WithLabelValues(repo).Set(0)
+		return
+	}
+	dependencyAlertsVisible.WithLabelValues(repo).Set(1)
+	for _, a := range alerts {
+		dependencyAlertOpen.WithLabelValues(repo, a.id, a.pkg, a.ecosystem, a.severity, a.scope, a.relationship, a.installed, a.fixed).Set(1)
 	}
 }
 
